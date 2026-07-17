@@ -255,13 +255,6 @@ export default function EditProjectPage() {
               <Field label="Project Type">
                 <input className={fieldClassName} disabled={!canEditProject} onChange={(event) => setProjectForm({ ...projectForm, projectType: event.target.value })} placeholder="Project type" value={projectForm.projectType} />
               </Field>
-              <Field label="Project Status">
-                <select className={fieldClassName} disabled={!canEditProject} onChange={(event) => setProjectForm({ ...projectForm, projectStatus: event.target.value as ProjectStatus })} value={projectForm.projectStatus}>
-                  {projectStatusOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </Field>
               <Field label="Project Description">
                 <textarea className={`${fieldClassName} min-h-28 resize-y`} disabled={!canEditProject} onChange={(event) => setProjectForm({ ...projectForm, description: event.target.value })} placeholder="Description" value={projectForm.description} />
               </Field>
@@ -320,6 +313,13 @@ export default function EditProjectPage() {
                   ) : null}
                 </div>
               </div>
+              <Field label="Project Status">
+                <select className={fieldClassName} disabled={!canEditProject} onChange={(event) => setProjectForm({ ...projectForm, projectStatus: event.target.value as ProjectStatus })} value={projectForm.projectStatus}>
+                  {projectStatusOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </Field>
               <Field label="Due Date">
                 <input className={fieldClassName} disabled={!canEditProject} onChange={(event) => setProjectForm({ ...projectForm, dueDate: event.target.value })} type="datetime-local" value={projectForm.dueDate} />
               </Field>

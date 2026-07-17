@@ -1215,6 +1215,7 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
 
     return {
       recipients: this.getActiveWhatsappRecipients(assignedEmployees),
+      recipientNames: assignedEmployees.map((employee) => employee.name),
       recipientRoles: Array.from(
         new Set(assignedEmployees.flatMap((employee) => employee.roles)),
       ),
@@ -1231,9 +1232,13 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       audience.recipients,
       message,
     );
+    const recipientText = audience.recipientNames.length
+      ? audience.recipientNames.join(', ')
+      : 'None';
+    const messageWithRecipients = `Sent to: ${recipientText}\n${message}`;
     const logMessage = delivery.detail
-      ? `${message} (${delivery.detail})`
-      : message;
+      ? `${messageWithRecipients} (${delivery.detail})`
+      : messageWithRecipients;
     this.addNotification(
       category,
       logMessage,
@@ -1259,9 +1264,13 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
         parameters,
       },
     );
+    const recipientText = audience.recipientNames.length
+      ? audience.recipientNames.join(', ')
+      : 'None';
+    const logMessageWithRecipients = `Sent to: ${recipientText}\n${logMessage}`;
     const finalLogMessage = delivery.detail
-      ? `${logMessage} (${delivery.detail})`
-      : logMessage;
+      ? `${logMessageWithRecipients} (${delivery.detail})`
+      : logMessageWithRecipients;
     this.addNotification(
       category,
       finalLogMessage,
@@ -1471,14 +1480,21 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     const assignedEmployees =
       taskView.assignedEmployees.map((employee) => employee.name).join(', ') ||
       'None';
+    const assignedBy =
+      (taskView.createdByEmployeeId &&
+        this.employees.get(taskView.createdByEmployeeId)?.name) ||
+      actorName;
 
     return [
+      `Action: ${action}`,
       `Task: ${taskView.title}`,
       `Project: ${taskView.projectName}`,
       `Assigned: ${assignedEmployees}`,
+      `Assigned by: ${assignedBy}`,
       `Due: ${this.formatTaskReminderDateTime(taskView.dueDate)}`,
       `Status: ${taskView.status}`,
       `Updated by: ${actorName}`,
+      `Updated at: ${this.formatTaskReminderDateTime(new Date().toISOString())}`,
       extraLine || '',
     ]
       .filter(Boolean)
@@ -1663,6 +1679,23 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     return Boolean(normalized && text.includes(normalized));
   }
 
+  private getNotificationSentToText(log: NotificationRecord) {
+    return this.getNotificationLineText(log, 'sent to');
+  }
+
+  private getNotificationLineText(log: NotificationRecord, label: string) {
+    const normalizedLabel = label.trim().toLowerCase();
+    return (
+      log.message
+        .split(/\r?\n/)
+        .find((line) =>
+          line.trim().toLowerCase().startsWith(`${normalizedLabel}:`),
+        )
+        ?.replace(new RegExp(`^${normalizedLabel}:\\s*`, 'i'), '')
+        .toLowerCase() || ''
+    );
+  }
+
   private notificationMatchesEmployeeScope(
     log: NotificationRecord,
     scope: Set<string> | null,
@@ -1683,19 +1716,33 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    if (
-      scopedEmployees.some(
-        (employee) =>
-          this.notificationTextIncludes(text, employee.name) ||
-          this.notificationTextIncludes(text, employee.email),
-      )
-    ) {
-      return true;
+    const sentToText = this.getNotificationSentToText(log);
+    if (sentToText) {
+      const assignedText = this.getNotificationLineText(log, 'assigned');
+      const assignedByText = this.getNotificationLineText(log, 'assigned by');
+      const visiblePeopleText = [sentToText, assignedText, assignedByText]
+        .filter(Boolean)
+        .join(', ');
+      return scopedEmployees.some((employee) =>
+        this.notificationTextIncludes(visiblePeopleText, employee.name),
+      );
+    }
+
+    const assignedText = this.getNotificationLineText(log, 'assigned');
+    const assignedByText = this.getNotificationLineText(log, 'assigned by');
+    if (assignedText || assignedByText) {
+      const visiblePeopleText = [assignedText, assignedByText]
+        .filter(Boolean)
+        .join(', ');
+      return scopedEmployees.some((employee) =>
+        this.notificationTextIncludes(visiblePeopleText, employee.name),
+      );
     }
 
     return taskViews.some(
       (task) =>
-        task.assignedEmployeeIds.some((employeeId) => scope.has(employeeId)) &&
+        ((task.createdByEmployeeId ? scope.has(task.createdByEmployeeId) : false) ||
+          task.assignedEmployeeIds.some((employeeId) => scope.has(employeeId))) &&
         this.notificationTextIncludes(text, task.title),
     );
   }
@@ -2562,7 +2609,7 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     );
     const taskView = await this.getTaskById(authorization, id);
     await this.sendTaskWhatsappTemplateNotification(
-      'Task',
+      'Task Created',
       taskView,
       'task_created_notifications',
       [
@@ -2841,7 +2888,7 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       nextView = await this.getTaskById(authorization, taskId);
     }
     await this.sendTaskWhatsappTemplateNotification(
-      markedComplete ? 'Task Complete' : 'Task',
+      markedComplete ? 'Task Complete' : 'Task Update',
       nextView,
       'task_update_notifications',
       [

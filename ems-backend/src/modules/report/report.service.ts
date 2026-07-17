@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import {
   AppDataSource,
@@ -84,11 +84,82 @@ type ReportPeriod = {
 };
 
 @Injectable()
-export class ReportService {
+export class ReportService implements OnModuleInit, OnModuleDestroy {
+  private reportSchedulerTimer: ReturnType<typeof setInterval> | null = null;
+
   constructor(
     private readonly emsService: CoreService,
     private readonly whatsappService: WhatsappService,
   ) {}
+
+  onModuleInit() {
+    void this.runDueAutomaticReports();
+    this.reportSchedulerTimer = setInterval(() => {
+      void this.runDueAutomaticReports();
+    }, 60_000);
+  }
+
+  onModuleDestroy() {
+    if (this.reportSchedulerTimer) {
+      clearInterval(this.reportSchedulerTimer);
+      this.reportSchedulerTimer = null;
+    }
+  }
+
+  private getIndiaDateTimeParts(value = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(value);
+    const map = Object.fromEntries(
+      parts
+        .filter((part) => part.type !== 'literal')
+        .map((part) => [part.type, part.value]),
+    );
+
+    return {
+      year: Number(map.year),
+      month: Number(map.month),
+      day: Number(map.day),
+      weekday: map.weekday,
+      hour: Number(map.hour),
+      minute: Number(map.minute),
+    };
+  }
+
+  private isIndiaMonthEnd(parts: ReturnType<ReportService['getIndiaDateTimeParts']>) {
+    return parts.day === new Date(parts.year, parts.month, 0).getDate();
+  }
+
+  private async runDueAutomaticReports() {
+    const parts = this.getIndiaDateTimeParts();
+
+    try {
+      if (parts.hour === 18 && parts.minute === 0) {
+        await this.runDailyPendingReport();
+      }
+
+      if (parts.weekday === 'Sun' && parts.hour === 21 && parts.minute === 0) {
+        await this.runWeeklyMisReport();
+      }
+
+      if (
+        this.isIndiaMonthEnd(parts) &&
+        parts.hour === 19 &&
+        parts.minute === 0
+      ) {
+        await this.runMonthlyReport();
+      }
+    } catch (error) {
+      console.error('Automatic report scheduler failed', error);
+    }
+  }
 
   private async query<T = unknown>(
     sql: string,
@@ -1298,7 +1369,12 @@ export class ReportService {
   // }
 
   async runScheduledReports(authorization?: string) {
-    await this.emsService.requireReportAccess(authorization);
+    const currentEmployee =
+      await this.emsService.requireReportAccess(authorization);
+    const manualReportRoles = currentEmployee.roles.filter(
+      (role) => role === 'SA1' || role === 'SA2',
+    );
+    const manualReportEmails = [currentEmployee.email].filter(Boolean);
 
     const now = new Date();
     const [weeklyMis, dailyPending, monthlyReport] = await Promise.all([
@@ -1315,7 +1391,7 @@ export class ReportService {
     ] = await Promise.all([
       this.dispatchWhatsappTemplateReport(
         'Weekly MIS Manual',
-        ADMIN_REPORT_ROLES,
+        manualReportRoles,
         'weekly_mis_reports',
         [
           String(weeklyMis.activeProjects),
@@ -1323,22 +1399,22 @@ export class ReportService {
           this.buildMisOverdueProjectTemplateValue(weeklyMis),
         ],
         this.buildMisWhatsappMessage(weeklyMis),
-        ADMIN_REPORT_EMAILS,
+        manualReportEmails,
       ),
       this.dispatchWhatsappTemplateReport(
         'Daily Pending Manual',
-        ADMIN_REPORT_ROLES,
+        manualReportRoles,
         'daily_pending_summarys',
         [
           String(dailyPending.totalPendingTasks),
           `${this.buildDailyProjectTemplateValue(dailyPending)} | Employee-wise: ${this.buildDailyEmployeeTaskTemplateValue(dailyPending)}`,
         ],
         this.buildDailyWhatsappMessage(dailyPending),
-        ADMIN_REPORT_EMAILS,
+        manualReportEmails,
       ),
       this.dispatchWhatsappDocumentTemplateReport(
         'Monthly TMS Manual',
-        ADMIN_REPORT_ROLES,
+        manualReportRoles,
         'monthly_tms_report',
         [monthlyReport.month],
         {
@@ -1347,7 +1423,7 @@ export class ReportService {
           mimeType: 'application/pdf',
         },
         this.buildMonthlyWhatsappMessage(monthlyReport),
-        ADMIN_REPORT_EMAILS,
+        manualReportEmails,
       ),
     ]);
 
