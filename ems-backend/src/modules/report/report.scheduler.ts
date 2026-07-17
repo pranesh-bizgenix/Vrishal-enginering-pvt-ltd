@@ -33,8 +33,8 @@ export class ReportSchedulerService implements OnModuleInit, OnModuleDestroy {
     const now = new Date();
 
     if (
-      now.getDay() === 1 &&
-      now.getHours() === 9 &&
+      now.getDay() === 0 &&
+      now.getHours() === 21 &&
       now.getMinutes() === 0 &&
       !this.runningWeekly
     ) {

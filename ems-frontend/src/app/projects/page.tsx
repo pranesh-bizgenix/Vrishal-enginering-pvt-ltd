@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { api, getToken } from '../lib/api';
 import { clearAuth } from '../lib/auth';
 import { getWorkspaceNavItems, routeSection } from '../lib/workspace';
-import { canManageTeamRecords, canViewerSeeEmployee, getEmployeeScopeIds, isAdminRole, itemMatchesEmployeeScope } from '../lib/hierarchy';
+import { canCreateProjects, canManageTeamRecords, canRunReports, canViewerSeeEmployee, getEmployeeScopeIds, isAdminRole, itemMatchesEmployeeScope } from '../lib/hierarchy';
 import { DashboardSidebar, DashboardTopbar } from '../../components/DashboardShell';
 import { PaginationBar } from '../../components/PaginationBar';
 import type { DashboardResponse, Employee, NavItem, PaginatedResponse, Project, SectionKey } from '../dashboard/types';
@@ -66,7 +66,7 @@ export default function ProjectsPage() {
   const [search, setSearch] = useState('');
   const [totalProjects, setTotalProjects] = useState(0);
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [selectedPersonId, setSelectedPersonId] = useState('');
+  const [selectedPersonId, setSelectedPersonId] = useState(() => (typeof window === 'undefined' ? '' : window.localStorage.getItem('ems-dashboard-person-scope') || ''));
 
   const loadData = useCallback(async () => {
     setBusy(true);
@@ -137,7 +137,10 @@ export default function ProjectsPage() {
 
   const me = dashboard?.employee;
   const isAdmin = isAdminRole(me?.roles ?? []);
+  const canDeleteRecords = Boolean(me?.roles.includes('SA1'));
+  const canEditProject = Boolean(me?.roles.includes('SA1'));
   const canManage = canManageTeamRecords(me?.roles ?? []);
+  const canCreateProject = canCreateProjects(me?.roles ?? []);
   const navItems = useMemo<NavItem[]>(() => getWorkspaceNavItems(canManage, isAdmin, me?.roles ?? []), [canManage, isAdmin, me?.roles]);
   const initials = me?.name?.trim()?.charAt(0)?.toUpperCase() || 'A';
   const selectedPerson = useMemo(() => employees.find((employee) => employee.id === selectedPersonId) || null, [employees, selectedPersonId]);
@@ -158,6 +161,16 @@ export default function ProjectsPage() {
         taskCount: 0,
       }));
   }, [canManage, employees, me]);
+  useEffect(() => {
+    if (!me || !selectedPersonId) {
+      return;
+    }
+
+    if (!sidebarPeopleFilter.some((person) => person.id === selectedPersonId)) {
+      setSelectedPersonId('');
+      window.localStorage.removeItem('ems-dashboard-person-scope');
+    }
+  }, [me, selectedPersonId, sidebarPeopleFilter]);
   const totalPages = Math.max(1, Math.ceil(totalProjects / perPage));
 
   useEffect(() => {
@@ -204,6 +217,11 @@ export default function ProjectsPage() {
   function handlePersonScopeChange(employeeId: string) {
     setPage(1);
     setSelectedPersonId(employeeId);
+    if (employeeId) {
+      window.localStorage.setItem('ems-dashboard-person-scope', employeeId);
+    } else {
+      window.localStorage.removeItem('ems-dashboard-person-scope');
+    }
   }
 
   function getScopedProjectTaskCount(project: Project) {
@@ -226,15 +244,19 @@ export default function ProjectsPage() {
 
   return (
     <main className="min-h-screen bg-[#edf2f7] text-slate-900 lg:flex">
-      <DashboardSidebar activeSection="projects" navItems={navItems} onClose={() => setSidebarOpen(false)} onSelect={handleSection} open={sidebarOpen} peopleFilter={sidebarPeopleFilter} peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'} selectedPersonId={selectedPersonId} onSelectPerson={canManage ? handlePersonScopeChange : undefined} />
+      <DashboardSidebar activeSection="projects" navItems={navItems} onClose={() => setSidebarOpen(false)} onSelect={handleSection} open={sidebarOpen} peopleFilter={sidebarPeopleFilter} 
+      // peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'} 
+      selectedPersonId={selectedPersonId} onSelectPerson={canManage ? handlePersonScopeChange : undefined} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <DashboardTopbar canRunReport={isAdmin} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} peopleFilter={sidebarPeopleFilter} peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'} selectedPersonId={selectedPersonId} onSelectPerson={canManage ? handlePersonScopeChange : undefined} subtitle="Task Management System" title="Projects" />
+        <DashboardTopbar canRunReport={canRunReports(me?.roles ?? [])} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} peopleFilter={sidebarPeopleFilter} 
+        // peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'} 
+        selectedPersonId={selectedPersonId} onSelectPerson={canManage ? handlePersonScopeChange : undefined} subtitle="Task Management System" title="Projects" />
         <section className="px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
           {error ? <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] sm:p-6 lg:p-7">
-            {!canManage ? (
+            {!canCreateProject ? (
               <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                You can view projects, but only ADMIN or LEADER can create or edit projects.
+                You can view projects, but only SA1 can create projects.
               </div>
             ) : null}
 
@@ -257,7 +279,7 @@ export default function ProjectsPage() {
                   <ArrowPathIcon className={`h-4 w-4 ${busy ? 'animate-spin' : ''}`} />
                   {busy ? 'Refreshing...' : 'Refresh'}
                 </button>
-                <Link href="/projects/new" className={['inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-medium transition', canManage ? 'bg-blue-600 text-white' : 'pointer-events-none bg-slate-200 text-slate-400'].join(' ')} aria-disabled={!canManage} tabIndex={canManage ? 0 : -1}>
+                <Link href="/projects/new" className={['inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-medium transition', canCreateProject ? 'bg-blue-600 text-white' : 'pointer-events-none bg-slate-200 text-slate-400'].join(' ')} aria-disabled={!canCreateProject} tabIndex={canCreateProject ? 0 : -1}>
                   <PlusIcon className="h-4 w-4" />
                   Create Project
                 </Link>
@@ -311,11 +333,11 @@ export default function ProjectsPage() {
                                 <button
                                   className={[
                                     'inline-flex h-8 items-center gap-1.5 rounded-l-xl px-4 text-xs font-semibold uppercase tracking-[0.14em] transition',
-                                    canManage ? 'bg-blue-600 text-white hover:bg-blue-700' : 'cursor-not-allowed bg-slate-200 text-slate-400',
+                                    canEditProject ? 'bg-blue-600 text-white hover:bg-blue-700' : 'cursor-not-allowed bg-slate-200 text-slate-400',
                                   ].join(' ')}
-                                  disabled={!canManage}
+                                  disabled={!canEditProject}
                                   onClick={() => {
-                                    if (!canManage) return;
+                                    if (!canEditProject) return;
                                     router.push(`/projects/${project.id}/edit`);
                                   }}
                                   type="button"
@@ -327,11 +349,9 @@ export default function ProjectsPage() {
                                   aria-label="Open project actions"
                                   className={[
                                     'inline-flex h-8 items-center rounded-r-xl px-3 transition',
-                                    canManage ? 'border-l border-blue-500 bg-blue-600 text-white hover:bg-blue-700' : 'cursor-not-allowed border-l border-slate-300 bg-slate-200 text-slate-400',
+                                    'border-l border-blue-500 bg-blue-600 text-white hover:bg-blue-700',
                                   ].join(' ')}
-                                  disabled={!canManage}
                                   onClick={(event) => {
-                                    if (!canManage) return;
                                     handleActionMenuToggle(project.id, event);
                                   }}
                                   type="button"
@@ -390,7 +410,7 @@ export default function ProjectsPage() {
                   <EyeIcon className="h-4 w-4" />
                   View
                 </button>
-                {isAdmin ? (
+                {canDeleteRecords ? (
                   <button
                     className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm font-medium text-red-600 transition hover:bg-red-50"
                     onClick={() => void deleteProject(project.id)}

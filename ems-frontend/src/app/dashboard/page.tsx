@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { api, getToken } from '../lib/api';
 import { clearAuth } from '../lib/auth';
 import { getWorkspaceNavItems, routeSection } from '../lib/workspace';
-import { canManageTeamRecords, getDirectLeaderEmployeeIds, getEmployeeScopeIds, getVisibleEmployeeIdsForViewer, isAdminRole, itemMatchesEmployeeScope } from '../lib/hierarchy';
+import { canManageTeamRecords, canRunReports, getDirectLeaderEmployeeIds, getEmployeeScopeIds, getVisibleEmployeeIdsForViewer, isAdminRole, itemMatchesEmployeeScope } from '../lib/hierarchy';
 import { DashboardSidebar, DashboardTopbar } from '../../components/DashboardShell';
 import type { DashboardResponse, Employee, NavItem, NotificationLog, PaginatedResponse, Project, SectionKey, Task } from './types';
 
@@ -31,6 +31,13 @@ type ChartRow = {
   value: number;
   tone: string;
   color: string;
+};
+
+type BarChartRow = {
+  label: string;
+  value: number;
+  tone: string;
+  tasks?: Task[];
 };
 
 function DonutGraphCard({
@@ -92,7 +99,9 @@ function DonutGraphCard({
                       strokeDashoffset={dashOffset}
                       strokeLinecap="butt"
                       strokeWidth="14"
-                    />
+                    >
+                      <title>{`${row.label}: ${row.value}`}</title>
+                    </circle>
                   );
                 })}
               </svg>
@@ -105,7 +114,7 @@ function DonutGraphCard({
               {rows.map((row) => {
                 const percentage = Math.round((row.value / total) * 100);
                 return (
-                  <div key={row.label} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                  <div key={row.label} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2" title={`${row.label}: ${row.value}`}>
                     <div className="flex items-center justify-between gap-3 text-sm">
                       <span className="flex min-w-0 items-center gap-2 font-medium text-slate-700">
                         <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: row.color }} />
@@ -132,7 +141,75 @@ function DonutGraphCard({
   );
 }
 
-function formatDisplayLabel(value: string) {
+function InsightBarGraphCard({
+  title,
+  subtitle,
+  rows,
+  totalLabel,
+  emptyMessage,
+}: {
+  title: string;
+  subtitle: string;
+  rows: BarChartRow[];
+  totalLabel: string;
+  emptyMessage: string;
+}) {
+  const total = rows.reduce((sum, row) => sum + row.value, 0);
+  const maxValue = Math.max(...rows.map((row) => row.value), 1);
+
+  return (
+    <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-950">{title}</h2>
+          <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-2xl font-semibold text-slate-950">{total}</p>
+          <p className="text-xs font-medium text-slate-400">{totalLabel}</p>
+        </div>
+      </div>
+
+      {total ? (
+        <div className="mt-6">
+          <div className="grid h-48 grid-cols-4 items-end gap-2 sm:grid-cols-8 sm:gap-3">
+            {rows.map((row) => {
+              const height = Math.max((row.value / maxValue) * 100, row.value ? 12 : 0);
+              return (
+                <div key={row.label} className="flex h-full min-w-0 flex-col justify-end gap-2">
+                  <div className="flex flex-1 items-end rounded-t-2xl bg-slate-100 px-1.5 pt-2">
+                    <div
+                      className={`w-full rounded-t-xl ${row.tone} shadow-sm transition-all`}
+                      style={{ height: `${height}%` }}
+                      title={`${row.label}: ${row.value}`}
+                    />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-semibold text-slate-950">{row.value}</p>
+                    <p className="truncate text-[11px] font-medium text-slate-500">{row.label}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-5 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            Highest focus: <span className="font-semibold text-slate-950">{rows.reduce((top, row) => (row.value > top.value ? row : top), rows[0]).label}</span>
+          </p>
+        </div>
+      ) : (
+        <div className="mt-5">
+          <EmptyState message={emptyMessage} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatDisplayLabel(value?: string | null) {
+  if (!value) {
+    return 'Not Set';
+  }
+
   if (value === 'IN_PROGRESS') {
     return 'Ongoing';
   }
@@ -141,6 +218,10 @@ function formatDisplayLabel(value: string) {
     .toLowerCase()
     .replace(/_/g, ' ')
     .replace(/(^|\s)\S/g, (char) => char.toUpperCase());
+}
+
+function formatShortDay(value: Date) {
+  return value.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
 }
 
 function isToday(value: string | null | undefined) {
@@ -340,9 +421,10 @@ export default function DashboardPage() {
 
   const me = dashboard?.employee;
   const isAdmin = isAdminRole(me?.roles ?? []);
+  const isSuperAdmin = Boolean(me?.roles.includes('SA1') || me?.roles.includes('SA2'));
   const isLeader = Boolean(me?.roles.includes('LEADER'));
   const canManage = canManageTeamRecords(me?.roles ?? []);
-  const canViewAllDashboardData = isAdmin;
+  const canViewAllDashboardData = isSuperAdmin;
   const navItems = useMemo<NavItem[]>(() => getWorkspaceNavItems(canManage, isAdmin, me?.roles ?? []), [canManage, isAdmin, me?.roles]);
   const initials = me?.name?.trim()?.charAt(0)?.toUpperCase() || 'A';
 
@@ -501,23 +583,23 @@ export default function DashboardPage() {
       return;
     }
 
-    const canUsePersonFilter = isAdmin || isLeader;
+    const canUsePersonFilter = isSuperAdmin;
     if (!canUsePersonFilter || !sidebarPeopleFilter.some((person) => person.id === selectedPersonId)) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedPersonId('');
       window.localStorage.removeItem('ems-dashboard-person-scope');
     }
-  }, [isAdmin, isLeader, me, selectedPersonId, sidebarPeopleFilter]);
+  }, [isSuperAdmin, me, selectedPersonId, sidebarPeopleFilter]);
 
   const selectedNotificationEmployeeId = useMemo(() => {
-    if (!selectedPersonId || !me || !isAdmin) {
+    if (!selectedPersonId || !me || !isSuperAdmin) {
       return '';
     }
 
     return sidebarPeopleFilter.some((person) => person.id === selectedPersonId) ? selectedPersonId : '';
-  }, [isAdmin, me, selectedPersonId, sidebarPeopleFilter]);
+  }, [isSuperAdmin, me, selectedPersonId, sidebarPeopleFilter]);
 
-  const notificationScopeKey = selectedNotificationEmployeeId || (isAdmin ? 'all' : me?.id || '');
+  const notificationScopeKey = selectedNotificationEmployeeId || (isSuperAdmin ? 'all' : me?.id || '');
 
   useEffect(() => {
     if (!dashboard || !me || !notificationScopeKey) {
@@ -590,6 +672,14 @@ export default function DashboardPage() {
     inProgress: activeProjectTasks.filter((task) => task.status === 'IN_PROGRESS').length,
     completed: activeProjectTasks.filter((task) => task.status === 'COMPLETED').length,
   }), [activeProjectTasks]);
+  const overdueTaskCount = useMemo(() => {
+    const now = loadedAt || 0;
+    return activeProjectTasks.filter((task) => task.status !== 'COMPLETED' && task.dueDate && new Date(task.dueDate).getTime() < now).length;
+  }, [activeProjectTasks, loadedAt]);
+  const completedOverdueTaskCount = useMemo(() => {
+    const now = loadedAt || 0;
+    return activeProjectTasks.filter((task) => task.status === 'COMPLETED' && task.dueDate && new Date(task.dueDate).getTime() < now).length;
+  }, [activeProjectTasks, loadedAt]);
   const filteredTaskNotificationsCount = (() => {
     const canUseScopedLogs = notificationLogsPage && notificationLogsScopeKey === notificationScopeKey;
     const notificationItems = canUseScopedLogs ? notificationLogsPage.items : dashboard?.recentNotifications || [];
@@ -608,7 +698,7 @@ export default function DashboardPage() {
   const employeesWithoutTasksCount = useMemo(
     () =>
       activeVisibleEmployees.filter(
-        (employee) => employee.roles.includes('EMPLOYEE') || employee.roles.includes('LEADER'),
+        (employee) => employee.roles.some((role) => role === 'ADMIN' || role === 'LEADER' || role === 'EMPLOYEE'),
       ).length,
     [activeVisibleEmployees],
   );
@@ -617,12 +707,59 @@ export default function DashboardPage() {
     { label: 'Ongoing', value: filteredTasksByStatus.inProgress, tone: 'bg-blue-500', color: '#3b82f6' },
     { label: 'Completed', value: filteredTasksByStatus.completed, tone: 'bg-emerald-500', color: '#10b981' },
   ], [filteredTasksByStatus.completed, filteredTasksByStatus.inProgress, filteredTasksByStatus.pending]);
+  const overdueTaskChartRows = useMemo<ChartRow[]>(() => [
+    { label: 'Not Done', value: overdueTaskCount, tone: 'bg-rose-500', color: '#e11d48' },
+    { label: 'Done', value: completedOverdueTaskCount, tone: 'bg-emerald-500', color: '#10b981' },
+  ], [completedOverdueTaskCount, overdueTaskCount]);
   const priorityChartRows = useMemo<ChartRow[]>(() => [
     { label: 'Low', value: activeProjectTasks.filter((task) => (task.priority || 'LOW') === 'LOW').length, tone: 'bg-emerald-500', color: '#10b981' },
     { label: 'Medium', value: activeProjectTasks.filter((task) => task.priority === 'MEDIUM').length, tone: 'bg-amber-500', color: '#f59e0b' },
     { label: 'High', value: activeProjectTasks.filter((task) => task.priority === 'HIGH').length, tone: 'bg-orange-500', color: '#f97316' },
     { label: 'Critical', value: activeProjectTasks.filter((task) => task.priority === 'CRITICAL').length, tone: 'bg-red-500', color: '#ef4444' },
   ], [activeProjectTasks]);
+  const qualityChartRows = useMemo<ChartRow[]>(() => [
+    { label: 'Good', value: activeProjectTasks.filter((task) => task.qualityRating === 'GOOD').length, tone: 'bg-emerald-500', color: '#10b981' },
+    { label: 'Great', value: activeProjectTasks.filter((task) => task.qualityRating === 'GREAT').length, tone: 'bg-blue-500', color: '#3b82f6' },
+    { label: 'Outstanding', value: activeProjectTasks.filter((task) => task.qualityRating === 'OUTSTANDING').length, tone: 'bg-[#8fc740]', color: '#8fc740' },
+    { label: 'LMB', value: activeProjectTasks.filter((task) => task.qualityRating === 'LMB').length, tone: 'bg-rose-500', color: '#e11d48' },
+    { label: 'Not Rated', value: activeProjectTasks.filter((task) => !task.qualityRating).length, tone: 'bg-slate-400', color: '#94a3b8' },
+  ], [activeProjectTasks]);
+  const dueOutlookRows = useMemo<BarChartRow[]>(() => {
+    const now = loadedAt ? new Date(loadedAt) : new Date();
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+    const openTasks = activeProjectTasks
+      .filter((task) => task.status !== 'COMPLETED' && task.dueDate)
+      .sort((left, right) => new Date(left.dueDate || '').getTime() - new Date(right.dueDate || '').getTime());
+    const overdueTasks = openTasks.filter((task) => new Date(task.dueDate || '').getTime() < startOfToday.getTime());
+    const rows: BarChartRow[] = [
+      {
+        label: 'Overdue',
+        value: overdueTasks.length,
+        tone: 'bg-rose-500',
+        tasks: overdueTasks,
+      },
+    ];
+
+    for (let index = 0; index < 7; index += 1) {
+      const dayStart = new Date(startOfToday);
+      dayStart.setDate(startOfToday.getDate() + index);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayStart.getDate() + 1);
+      const dayTasks = openTasks.filter((task) => {
+        const dueAt = new Date(task.dueDate || '').getTime();
+        return dueAt >= dayStart.getTime() && dueAt < dayEnd.getTime();
+      });
+      rows.push({
+        label: index === 0 ? 'Today' : formatShortDay(dayStart),
+        value: dayTasks.length,
+        tone: index === 0 ? 'bg-amber-500' : 'bg-[#8fc740]',
+        tasks: dayTasks,
+      });
+    }
+
+    return rows;
+  }, [activeProjectTasks, loadedAt]);
 
   const employeePerformanceRows = useMemo(() => {
     if (!me) {
@@ -634,14 +771,21 @@ export default function DashboardPage() {
         employee.email?.trim().toLowerCase() === 'admin@sjsangath.com' ||
         employee.name?.trim().toLowerCase() === 'admin',
     )?.id;
-    const employeesToShow = activeVisibleEmployees.filter((employee) => employee.id !== systemAdminEmployeeId);
+    const employeesToShow = activeVisibleEmployees.filter(
+      (employee) =>
+        employee.id !== systemAdminEmployeeId &&
+        !employee.roles.some((role) => role === 'SA1' || role === 'SA2') &&
+        itemMatchesEmployeeScope([employee.id], accessibleEmployeeIds),
+    );
     const now = loadedAt || 0;
 
     return employeesToShow.map((employee) => {
-      const assignedTasks = activeProjectTasks.filter((task) => task.assignedEmployeeIds.includes(employee.id));
+      const assignedTasks = filteredTasks.filter((task) => task.assignedEmployeeIds.includes(employee.id));
       const completedTasks = assignedTasks.filter((task) => task.status === 'COMPLETED');
-      const pendingTasks = assignedTasks.filter((task) => task.status !== 'COMPLETED');
-      const overdueTasks = pendingTasks.filter((task) => task.dueDate && new Date(task.dueDate).getTime() < now);
+      const pendingTasks = assignedTasks.filter((task) => task.status === 'PENDING');
+      const ongoingTasks = assignedTasks.filter((task) => task.status === 'IN_PROGRESS');
+      const openTasks = assignedTasks.filter((task) => task.status !== 'COMPLETED');
+      const overdueTasks = openTasks.filter((task) => task.dueDate && new Date(task.dueDate).getTime() < now);
       const assignedProjects = filteredActiveProjects.filter((project) => project.assignedEmployeeIds.includes(employee.id)).length;
 
       return {
@@ -652,11 +796,12 @@ export default function DashboardPage() {
         assignedTasks: assignedTasks.length,
         completedTasks: completedTasks.length,
         pendingTasks: pendingTasks.length,
+        ongoingTasks: ongoingTasks.length,
         overdueTasks: overdueTasks.length,
         completionRate: assignedTasks.length ? Math.round((completedTasks.length / assignedTasks.length) * 100) : 0,
       };
     }).sort((left, right) => right.assignedTasks - left.assignedTasks || left.employeeName.localeCompare(right.employeeName));
-  }, [activeProjectTasks, activeVisibleEmployees, employees, filteredActiveProjects, loadedAt, me]);
+  }, [accessibleEmployeeIds, activeVisibleEmployees, employees, filteredActiveProjects, filteredTasks, loadedAt, me]);
   const averageCompletionRate = employeePerformanceRows.length
     ? Math.round(employeePerformanceRows.reduce((sum, employee) => sum + employee.completionRate, 0) / employeePerformanceRows.length)
     : 0;
@@ -719,14 +864,14 @@ export default function DashboardPage() {
         onSelect={handleSection}
         open={sidebarOpen}
         peopleFilter={sidebarPeopleFilter}
-        peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'}
+        // peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'}
         selectedPersonId={selectedPersonId}
         onSelectPerson={handlePersonScopeChange}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <DashboardTopbar
-          canRunReport={isAdmin}
+          canRunReport={canRunReports(me?.roles ?? [])}
           initials={initials}
           userEmail={me?.email ?? ''}
           userName={me?.name ?? 'Admin'}
@@ -734,7 +879,7 @@ export default function DashboardPage() {
           onMenuOpen={() => setSidebarOpen(true)}
           onRunReport={triggerReports}
           peopleFilter={sidebarPeopleFilter}
-          peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'}
+          // peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'}
           selectedPersonId={selectedPersonId}
           onSelectPerson={handlePersonScopeChange}
           subtitle="Task Management System"
@@ -794,7 +939,7 @@ export default function DashboardPage() {
                           />
                         ) : null}
                       </div>
-                    <p className="text-xs uppercase tracking-[0.38em] text-slate-500">Immediate Focus</p>
+                    <p className="text-xs uppercase tracking-[0.38em] text-slate-500">Task Overview</p>
                     <div className="mt-5 overflow-hidden rounded-[24px] border border-slate-200 bg-slate-50">
                       {([
                         [canViewAllDashboardData ? 'Pending tasks' : 'My pending tasks', filteredTasksByStatus.pending],
@@ -886,7 +1031,7 @@ export default function DashboardPage() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                 <div>
                   <h2 className="text-xl font-semibold text-slate-950 sm:text-2xl">Workload Graphs</h2>
-                  <p className="mt-1 text-sm text-slate-500">Quick view of task status, priority, and employee completion.</p>
+                  <p className="mt-1 text-sm text-slate-500">Quick view of task status, priority, and overdue work.</p>
                 </div>
               </div>
               <div className="mt-5 grid gap-5 xl:grid-cols-2">
@@ -898,12 +1043,35 @@ export default function DashboardPage() {
                   emptyMessage="No task status data available yet."
                 />
                 <DonutGraphCard
+                  title="Overdue Tasks"
+                  subtitle="Overdue tasks against current open and completed work."
+                  rows={overdueTaskChartRows}
+                  totalLabel="Total tasks"
+                  emptyMessage="No overdue task data available yet."
+                />
+                <DonutGraphCard
                   title="Task Priority"
                   subtitle="Low, medium, high, and critical work."
                   rows={priorityChartRows}
                   totalLabel="Total tasks"
                   emptyMessage="No priority data available yet."
                 />
+                <DonutGraphCard
+                  title="Task Quality"
+                  subtitle="Quality ratings across visible task work."
+                  rows={qualityChartRows}
+                  totalLabel="rated tasks"
+                  emptyMessage="No task quality data available yet."
+                />
+                <div className="xl:col-span-2">
+                  <InsightBarGraphCard
+                    title="7-Day Due Outlook"
+                    subtitle="Open tasks due now and across the next week."
+                    rows={dueOutlookRows}
+                    totalLabel="open tasks"
+                    emptyMessage="No upcoming due tasks available yet."
+                  />
+                </div>
               </div>
             </section>
             <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] sm:p-6 lg:p-7">
@@ -929,6 +1097,7 @@ export default function DashboardPage() {
                           <th className="px-4 py-4 font-semibold">Assigned</th>
                           <th className="px-4 py-4 font-semibold">Completed</th>
                           <th className="px-4 py-4 font-semibold">Pending</th>
+                          <th className="px-4 py-4 font-semibold">Ongoing</th>
                           <th className="px-4 py-4 font-semibold">Overdue</th>
                           <th className="px-4 py-4 font-semibold">Rate</th>
                         </tr>
@@ -942,6 +1111,7 @@ export default function DashboardPage() {
                             <td className="px-4 py-4 text-slate-700">{employee.assignedTasks}</td>
                             <td className="px-4 py-4 text-emerald-700">{employee.completedTasks}</td>
                             <td className="px-4 py-4 text-amber-700">{employee.pendingTasks}</td>
+                            <td className="px-4 py-4 text-blue-700">{employee.ongoingTasks}</td>
                             <td className="px-4 py-4 text-rose-700">{employee.overdueTasks}</td>
                             <td className="px-4 py-4">
                               <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{employee.completionRate}%</span>
@@ -991,13 +1161,3 @@ export default function DashboardPage() {
     </main>
   );
 }
-
-
-
-
-
-
-
-
-
-

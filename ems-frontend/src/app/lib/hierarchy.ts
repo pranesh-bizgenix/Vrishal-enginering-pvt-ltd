@@ -23,6 +23,14 @@ export function canManageTeamRecords(roles: Role[] = []) {
   return getHighestRolePower(roles) >= rolePower.LEADER;
 }
 
+export function canCreateProjects(roles: Role[] = []) {
+  return roles.includes('SA1');
+}
+
+export function canRunReports(roles: Role[] = []) {
+  return roles.includes('SA1') || roles.includes('SA2');
+}
+
 export function formatRoleName(role: Role | string) {
   if (role === 'SA1') return 'Super Admin 1';
   if (role === 'SA2') return 'Super Admin 2';
@@ -46,14 +54,23 @@ export function canViewerSeeEmployee(viewer: Employee | null | undefined, employ
     return true;
   }
 
-  const viewerPower = getHighestRolePower(viewer.roles);
-  if (viewerPower >= rolePower.ADMIN) {
-    return getHighestRolePower(employee.roles) < viewerPower;
+  if (viewer.roles.includes('SA1')) {
+    return true;
   }
 
-  if (viewer.roles.includes('LEADER')) {
-    return employee.leaderId === viewer.id && employee.roles.includes('EMPLOYEE') && !employee.roles.includes('LEADER');
+  if (viewer.roles.includes('SA2')) {
+    return !employee.roles.includes('SA1');
   }
+
+  // Old hierarchy rule kept for reference:
+  // const viewerPower = getHighestRolePower(viewer.roles);
+  // if (viewerPower >= rolePower.ADMIN) {
+  //   return getHighestRolePower(employee.roles) < viewerPower;
+  // }
+  //
+  // if (viewer.roles.includes('LEADER')) {
+  //   return employee.leaderId === viewer.id && employee.roles.includes('EMPLOYEE') && !employee.roles.includes('LEADER');
+  // }
 
   return false;
 }
@@ -100,17 +117,26 @@ export function getVisibleEmployeeIdsForViewer(employees: Employee[], viewer?: E
     return null;
   }
 
-  const viewerPower = getHighestRolePower(viewer.roles);
-  if (viewerPower >= rolePower.ADMIN) {
-    return new Set(employees.filter((employee) => canViewerSeeEmployee(viewer, employee)).map((employee) => employee.id));
+  if (viewer.roles.includes('SA2')) {
+    return new Set(
+      employees
+        .filter((employee) => !employee.roles.includes('SA1'))
+        .map((employee) => employee.id),
+    );
   }
 
-  if (viewer.roles.includes('LEADER')) {
-    return new Set([
-      viewer.id,
-      ...getDirectLeaderEmployeeIds(employees, viewer.id),
-    ]);
-  }
+  // Old hierarchy rule kept for reference:
+  // const viewerPower = getHighestRolePower(viewer.roles);
+  // if (viewerPower >= rolePower.ADMIN) {
+  //   return new Set(employees.filter((employee) => canViewerSeeEmployee(viewer, employee)).map((employee) => employee.id));
+  // }
+  //
+  // if (viewer.roles.includes('LEADER')) {
+  //   return new Set([
+  //     viewer.id,
+  //     ...getDirectLeaderEmployeeIds(employees, viewer.id),
+  //   ]);
+  // }
 
   return new Set([viewer.id]);
 }
@@ -131,17 +157,35 @@ export function getAssignableEmployeesForViewer(
     return employees.filter(isSelectable);
   }
 
-  const viewerPower = getHighestRolePower(viewer.roles);
-  if (viewerPower >= rolePower.ADMIN) {
-    return employees.filter((employee) => canViewerSeeEmployee(viewer, employee) && isSelectable(employee));
+  if (viewer.roles.includes('SA2')) {
+    return employees.filter((employee) => isSelectable(employee) && !employee.roles.includes('SA1'));
   }
 
-  if (viewer.roles.includes('LEADER')) {
-    const teamIds = getDirectLeaderEmployeeIds(employees, viewer.id);
-    return employees.filter((employee) => (employee.id === viewer.id || teamIds.has(employee.id)) && isSelectable(employee));
-  }
+  // Old hierarchy rule kept for reference:
+  // const viewerPower = getHighestRolePower(viewer.roles);
+  // if (viewerPower >= rolePower.ADMIN) {
+  //   return employees.filter((employee) => canViewerSeeEmployee(viewer, employee) && isSelectable(employee));
+  // }
+  //
+  // if (viewer.roles.includes('LEADER')) {
+  //   const teamIds = getDirectLeaderEmployeeIds(employees, viewer.id);
+  //   return employees.filter((employee) => (employee.id === viewer.id || teamIds.has(employee.id)) && isSelectable(employee));
+  // }
 
   return employees.filter((employee) => employee.id === viewer.id && isSelectable(employee));
+}
+
+export function getTaskAssignableEmployees(
+  employees: Employee[],
+  selectedEmployeeIds: string[] = [],
+) {
+  const selectedIds = new Set(selectedEmployeeIds);
+  return employees.filter(
+    (employee) =>
+      (employee.active !== false || selectedIds.has(employee.id)) &&
+      !employee.roles.includes('SA1') &&
+      !employee.roles.includes('SA2'),
+  );
 }
 
 export function itemMatchesEmployeeScope(assignedEmployeeIds: string[], scopeIds: Set<string> | null) {

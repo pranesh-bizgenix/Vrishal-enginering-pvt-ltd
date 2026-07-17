@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { api, getToken } from '../lib/api';
 import { clearAuth } from '../lib/auth';
 import { getWorkspaceNavItems, routeSection } from '../lib/workspace';
-import { canManageTeamRecords, canViewerSeeEmployee, formatRoleName, getHighestRolePower, isAdminRole } from '../lib/hierarchy';
+import { canManageTeamRecords, canRunReports, canViewerSeeEmployee, formatRoleName, getHighestRolePower, isAdminRole } from '../lib/hierarchy';
 import { DashboardSidebar, DashboardTopbar } from '../../components/DashboardShell';
 import type { DashboardResponse, Employee, NavItem, PaginatedResponse, SectionKey, Task } from '../dashboard/types';
 
@@ -158,7 +158,7 @@ export default function MyAccountPage() {
     <main className="min-h-screen bg-[#edf2f7] text-slate-900 lg:flex">
       <DashboardSidebar activeSection="overview" navItems={navItems} onClose={() => setSidebarOpen(false)} onSelect={handleSection} open={sidebarOpen} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <DashboardTopbar canRunReport={isAdmin} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} subtitle="Task Management System" title="My Account" />
+        <DashboardTopbar canRunReport={canRunReports(me?.roles ?? [])} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} subtitle="Task Management System" title="My Account" />
 
         <section className="px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
           {error ? <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
@@ -189,7 +189,7 @@ export default function MyAccountPage() {
               <StatCard label="Current Work" value={currentWorkCount} helper="Pending and ongoing tasks only" />
             </div>
 
-            <div className="border-t border-slate-200 bg-white px-5 py-5 sm:px-6 lg:px-8">
+            {/* <div className="border-t border-slate-200 bg-white px-5 py-5 sm:px-6 lg:px-8">
               <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(135deg,#ffffff,#f8faf4)] p-5 shadow-sm">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                   <div className="min-w-0 flex-1">
@@ -221,7 +221,7 @@ export default function MyAccountPage() {
                   </button>
                 </div>
               </div>
-            </div>
+            </div> */}
 
             <div className="grid gap-6 border-t border-slate-200 bg-[#f8faf4] p-5 sm:p-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] lg:p-8">
               <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">

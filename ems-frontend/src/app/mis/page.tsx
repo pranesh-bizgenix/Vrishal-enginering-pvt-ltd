@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { api, getToken } from '../lib/api';
 import { clearAuth } from '../lib/auth';
 import { getWorkspaceNavItems, routeSection } from '../lib/workspace';
-import { canManageTeamRecords, getDirectLeaderEmployeeIds, getEmployeeScopeIds, isAdminRole, itemMatchesEmployeeScope } from '../lib/hierarchy';
+import { canManageTeamRecords, canRunReports, getDirectLeaderEmployeeIds, getEmployeeScopeIds, isAdminRole, itemMatchesEmployeeScope } from '../lib/hierarchy';
 import { DashboardSidebar, DashboardTopbar } from '../../components/DashboardShell';
 import type { DashboardResponse, DailyPendingSummary, Employee, MisSummary, NavItem, NotificationLog, Project, SectionKey, Task } from '../dashboard/types';
 
@@ -102,6 +102,28 @@ function formatDate(value: string | null | undefined) {
   return new Date(value).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
 }
 
+function formatReportLabel(value: string) {
+  return value
+    .toLowerCase()
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function getTaskMetaParts(task: Task) {
+  const parts: string[] = [];
+  if (task.qualityRating) {
+    parts.push(`Quality: ${formatReportLabel(task.qualityRating)}`);
+  }
+  if (task.ncItems?.length) {
+    parts.push(`NC Count: ${task.ncItems.length}`);
+  }
+  if (task.status !== 'COMPLETED' && task.dueDate && new Date(task.dueDate).getTime() < Date.now()) {
+    parts.push('Delay: Overdue');
+  }
+  return parts;
+}
+
 function escapeHtml(value: unknown) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -116,7 +138,9 @@ function joinTaskNames(tasks: Task[]) {
         .map((task) => {
           const title = task.title?.trim() || 'Untitled task';
           const projectName = task.projectName?.trim();
-          return projectName ? `${title} (${projectName})` : title;
+          const baseName = projectName ? `${title} (${projectName})` : title;
+          const meta = getTaskMetaParts(task);
+          return meta.length ? `${baseName} [${meta.join(' | ')}]` : baseName;
         })
         .join(', ')
     : '-';
@@ -125,7 +149,9 @@ function joinTaskNames(tasks: Task[]) {
 function formatTaskName(task: Task) {
   const title = task.title?.trim() || 'Untitled task';
   const projectName = task.projectName?.trim();
-  return projectName ? `${title} | ${projectName}` : title;
+  const baseName = projectName ? `${title} | ${projectName}` : title;
+  const meta = getTaskMetaParts(task);
+  return meta.length ? `${baseName} | ${meta.join(' | ')}` : baseName;
 }
 
 function formatProjectName(project: Project) {
@@ -429,7 +455,7 @@ export default function MisPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [period, setPeriod] = useState<MisPeriod>('all');
   const [periodValue, setPeriodValue] = useState('');
-  const [selectedPersonId, setSelectedPersonId] = useState('');
+  const [selectedPersonId, setSelectedPersonId] = useState(() => (typeof window === 'undefined' ? '' : window.localStorage.getItem('ems-dashboard-person-scope') || ''));
   const [loadedAt, setLoadedAt] = useState(0);
 
   const loadData = useCallback(async () => {
@@ -512,6 +538,16 @@ export default function MisPage() {
         taskCount: 0,
       }));
   }, [employees, isAdmin, isLeader, leaderEmployeeIds, me]);
+  useEffect(() => {
+    if (!me || !selectedPersonId) {
+      return;
+    }
+
+    if (!sidebarPeopleFilter.some((person) => person.id === selectedPersonId)) {
+      setSelectedPersonId('');
+      window.localStorage.removeItem('ems-dashboard-person-scope');
+    }
+  }, [me, selectedPersonId, sidebarPeopleFilter]);
   const filteredProjects = useMemo(
     () =>
       projects
@@ -567,13 +603,16 @@ export default function MisPage() {
     return (misSummary?.employeeTaskBreakdown || [])
       .filter((row) => selectedScopeEmployeeIds ? selectedScopeEmployeeIds.has(row.employeeId) : true)
       .filter((row) => row.employeeName.trim().toLowerCase() !== 'admin')
-      .map((row) => ({
-        employee: {
+      .map((row) => {
+        const employeeRecord = employees.find((employee) => employee.id === row.employeeId);
+        return {
+          row,
+          employee: {
           id: row.employeeId,
           name: row.employeeName,
           email: row.employeeEmail || '',
           phone: '',
-          roles: ['EMPLOYEE'],
+          roles: employeeRecord?.roles || ['EMPLOYEE'],
           active: true,
           currentProjectIds: [],
           projectHistoryIds: [],
@@ -581,6 +620,11 @@ export default function MisPage() {
           leaderName: null,
           leaderActive: null,
         } as Employee,
+        };
+      })
+      .filter(({ employee }) => !employee.roles.some((role) => role === 'SA1' || role === 'SA2'))
+      .map(({ row, employee }) => ({
+        employee,
         assignedProjects: filteredProjects.filter((project) => project.assignedEmployeeIds.includes(row.employeeId)),
         assignedTasks: filteredTasks.filter((task) => task.assignedEmployeeIds.includes(row.employeeId)),
         doneTasks: filteredTasks.filter((task) => task.assignedEmployeeIds.includes(row.employeeId) && task.status === 'COMPLETED'),
@@ -603,7 +647,7 @@ export default function MisPage() {
           return Boolean(completedAt && new Date(completedAt).getTime() > new Date(task.dueDate).getTime());
         }),
       }));
-  }, [filteredProjects, filteredTasks, misSummary?.employeeTaskBreakdown, selectedScopeEmployeeIds]);
+  }, [employees, filteredProjects, filteredTasks, misSummary?.employeeTaskBreakdown, selectedScopeEmployeeIds]);
   const projectTrackingRows = useMemo(() => {
     return filteredProjects
       .map((project) => {
@@ -691,6 +735,11 @@ export default function MisPage() {
 
   function handlePersonScopeChange(employeeId: string) {
     setSelectedPersonId(employeeId);
+    if (employeeId) {
+      window.localStorage.setItem('ems-dashboard-person-scope', employeeId);
+    } else {
+      window.localStorage.removeItem('ems-dashboard-person-scope');
+    }
   }
 
   function downloadEmployeeExcel() {
@@ -770,9 +819,13 @@ export default function MisPage() {
 
   return (
     <main className="min-h-screen bg-[#edf2f7] text-slate-900 lg:flex">
-      <DashboardSidebar activeSection="mis" navItems={navItems} onClose={() => setSidebarOpen(false)} onSelect={handleSection} open={sidebarOpen} peopleFilter={sidebarPeopleFilter} peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'} selectedPersonId={selectedPersonId} onSelectPerson={handlePersonScopeChange} />
+      <DashboardSidebar activeSection="mis" navItems={navItems} onClose={() => setSidebarOpen(false)} onSelect={handleSection} open={sidebarOpen} peopleFilter={sidebarPeopleFilter} 
+      // peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'} 
+      selectedPersonId={selectedPersonId} onSelectPerson={handlePersonScopeChange} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <DashboardTopbar canRunReport={isAdmin} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} peopleFilter={sidebarPeopleFilter} peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'} selectedPersonId={selectedPersonId} onSelectPerson={handlePersonScopeChange} subtitle="Task Management System" title="MIS" />
+        <DashboardTopbar canRunReport={canRunReports(me?.roles ?? [])} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} peopleFilter={sidebarPeopleFilter} 
+        // peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'} 
+        selectedPersonId={selectedPersonId} onSelectPerson={handlePersonScopeChange} subtitle="Task Management System" title="MIS" />
         <section className="px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
           {error ? <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] sm:p-6 lg:p-7">

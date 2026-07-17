@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { api, getToken } from '../lib/api';
 import { clearAuth } from '../lib/auth';
 import { getWorkspaceNavItems, routeSection } from '../lib/workspace';
-import { canManageTeamRecords, canViewerSeeEmployee, formatRoleName, getDirectLeaderEmployeeIds, getEmployeeScopeIds, getHighestRolePower, isAdminRole, itemMatchesEmployeeScope } from '../lib/hierarchy';
+import { canManageTeamRecords, canRunReports, canViewerSeeEmployee, formatRoleName, getDirectLeaderEmployeeIds, getEmployeeScopeIds, getHighestRolePower, isAdminRole, itemMatchesEmployeeScope } from '../lib/hierarchy';
 import { DashboardSidebar, DashboardTopbar } from '../../components/DashboardShell';
 import { PaginationBar } from '../../components/PaginationBar';
 import type { DashboardResponse, Employee, NavItem, PaginatedResponse, SectionKey, Task } from '../dashboard/types';
@@ -42,6 +42,16 @@ function EditIcon({ className = 'h-4 w-4' }: { className?: string }) {
 
 function formatDateTime(value: string | null) {
   return value ? new Date(value).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'Not set';
+}
+
+function getTodayDateValue() {
+  const now = new Date();
+  const indiaDate = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  return indiaDate.toISOString().slice(0, 10);
+}
+
+function formatFilterDateLabel(value: string) {
+  return value ? new Date(`${value}T00:00:00`).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : '';
 }
 
 function formatTaskLabel(value: string) {
@@ -88,9 +98,11 @@ export default function TasksPage() {
   const [openMenu, setOpenMenu] = useState<TaskMenuState | null>(null);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const [confirmTask, setConfirmTask] = useState<Task | null>(null);
+  const [confirmDoneTask, setConfirmDoneTask] = useState<Task | null>(null);
   const [selectedPersonId, setSelectedPersonId] = useState(() => (typeof window === 'undefined' ? '' : window.localStorage.getItem('ems-dashboard-person-scope') || ''));
   const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
-  const [updatingTaskId, setUpdatingTaskId] = useState<string | null>(null);
+  const [approvingTaskId, setApprovingTaskId] = useState<string | null>(null);
+  const [submittingDoneTaskId, setSubmittingDoneTaskId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(25);
   const [serverSearch, setServerSearch] = useState('');
@@ -170,6 +182,8 @@ export default function TasksPage() {
 
   const me = dashboard?.employee;
   const isAdmin = isAdminRole(me?.roles ?? []);
+  const isSuperAdmin = Boolean(me?.roles.includes('SA1') || me?.roles.includes('SA2'));
+  const canDeleteRecords = Boolean(me?.roles.includes('SA1'));
   const canManage = canManageTeamRecords(me?.roles ?? []);
   const totalPages = Math.max(1, Math.ceil(totalTasks / perPage));
   const navItems = useMemo<NavItem[]>(() => getWorkspaceNavItems(canManage, isAdmin, me?.roles ?? []), [canManage, isAdmin, me?.roles]);
@@ -185,12 +199,12 @@ export default function TasksPage() {
       return tasks.filter((task) => itemMatchesEmployeeScope(task.assignedEmployeeIds, selectedScopeEmployeeIds));
     }
 
-    if (isAdmin) {
+    if (isSuperAdmin) {
       return tasks;
     }
 
-    return tasks.filter((task) => task.assignedEmployeeIds.includes(me.id));
-  }, [isAdmin, me, selectedScopeEmployeeIds, tasks]);
+    return tasks.filter((task) => task.createdByEmployeeId === me.id || task.assignedEmployeeIds.includes(me.id));
+  }, [isSuperAdmin, me, selectedScopeEmployeeIds, tasks]);
 
   const sidebarPeopleFilter = useMemo(() => {
     if (!me || !canManage) {
@@ -372,20 +386,25 @@ export default function TasksPage() {
     }
   }
 
-  async function markTaskDone(taskId: string) {
+  async function approveTask(taskId: string) {
     try {
-      setUpdatingTaskId(taskId);
+      setApprovingTaskId(taskId);
       setError('');
-      await api(`/tasks/${taskId}/status`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: 'COMPLETED' }),
-      });
+      await api(`/tasks/${taskId}/approve`, { method: 'POST' });
       await loadData();
     } catch (submissionError) {
-      setError(submissionError instanceof Error ? submissionError.message : 'Unable to complete task.');
+      setError(submissionError instanceof Error ? submissionError.message : 'Unable to approve task.');
     } finally {
-      setUpdatingTaskId(null);
+      setApprovingTaskId(null);
     }
+  }
+
+  function isTaskApproved(task: Task) {
+    return task.notes.some((note) => note.message.trim().toLowerCase().startsWith('approved by'));
+  }
+
+  function isTaskSubmittedDone(task: Task) {
+    return task.notes.some((note) => note.markDone);
   }
 
   function updateFilter<Key extends keyof TaskFilters>(key: Key, value: TaskFilters[Key]) {
@@ -394,6 +413,14 @@ export default function TasksPage() {
 
   function resetFilters() {
     setFilters({ project: '', assignee: '', timelineMode: 'month', timelineValue: '', type: '', status: '' });
+  }
+
+  function showTodayWorkTasks() {
+    setFilters((current) => ({
+      ...current,
+      timelineMode: 'day',
+      timelineValue: getTodayDateValue(),
+    }));
   }
 
   function toggleGroup(projectId: string) {
@@ -415,6 +442,43 @@ export default function TasksPage() {
     setConfirmTask(null);
   }
 
+  function openDoneConfirm(task: Task) {
+    setOpenMenu(null);
+    setConfirmDoneTask(task);
+  }
+
+  function closeDoneConfirm() {
+    setConfirmDoneTask(null);
+  }
+
+  async function submitDoneTask(task: Task) {
+    setConfirmDoneTask(null);
+
+    if (task.requireProof && !task.media?.length) {
+      router.push(`/tasks/${task.id}/edit`);
+      return;
+    }
+
+    try {
+      setSubmittingDoneTaskId(task.id);
+      setError('');
+      await api(`/tasks/${task.id}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({
+          message: task.requireProof
+            ? `${me?.name || 'Assigned user'} submitted work for approval with proof attachment.`
+            : `${me?.name || 'Assigned user'} submitted work for approval.`,
+          markDone: true,
+        }),
+      });
+      await loadData();
+    } catch (submissionError) {
+      setError(submissionError instanceof Error ? submissionError.message : 'Unable to submit task done.');
+    } finally {
+      setSubmittingDoneTaskId(null);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-[#edf2f7] text-slate-900 lg:flex">
       <DashboardSidebar
@@ -424,12 +488,14 @@ export default function TasksPage() {
         onSelect={handleSection}
         open={sidebarOpen}
         peopleFilter={sidebarPeopleFilter}
-        peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'}
+        // peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'}
         selectedPersonId={selectedPersonId}
         onSelectPerson={handlePersonScopeChange}
       />
       <div className="flex min-w-0 flex-1 flex-col">
-        <DashboardTopbar canRunReport={isAdmin} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} peopleFilter={sidebarPeopleFilter} peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'} selectedPersonId={selectedPersonId} onSelectPerson={handlePersonScopeChange} subtitle="Task Management System" title="Tasks" />
+        <DashboardTopbar canRunReport={canRunReports(me?.roles ?? [])} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} peopleFilter={sidebarPeopleFilter} 
+        // peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'} 
+        selectedPersonId={selectedPersonId} onSelectPerson={handlePersonScopeChange} subtitle="Task Management System" title="Tasks" />
         <section className="px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
           {error ? <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] sm:p-6 lg:p-7">
@@ -480,9 +546,14 @@ export default function TasksPage() {
                   <p className="text-sm font-medium text-slate-700">Filters</p>
                   <p className="mt-1 text-xs text-slate-500">Filter tasks by project, assignee, day/month/year, type, and status.</p>
                 </div>
-                <button type="button" onClick={resetFilters} className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
-                  Clear Filters
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={showTodayWorkTasks} className="inline-flex items-center justify-center rounded-2xl bg-[#8fc740] px-4 py-2 text-sm font-semibold text-[#123b76] transition hover:bg-[#7fb632]">
+                    Today Work
+                  </button>
+                  <button type="button" onClick={resetFilters} className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+                    Clear Filters
+                  </button>
+                </div>
               </div>
               <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                 <select className={filterFieldClassName} onChange={(event) => updateFilter('project', event.target.value)} value={filters.project}>
@@ -520,6 +591,11 @@ export default function TasksPage() {
                   ))}
                 </select>
               </div>
+              {filters.timelineMode === 'day' && filters.timelineValue ? (
+                <div className="mt-4 rounded-2xl border border-[#d8ecbb] bg-white px-4 py-3 text-sm font-semibold text-slate-700">
+                  {formatFilterDateLabel(filters.timelineValue)} work task list: {filteredTasks.length}
+                </div>
+              ) : null}
             </div>
 
             <div className="mt-6">
@@ -570,13 +646,32 @@ export default function TasksPage() {
                             {group.tasks.map((task) => {
                               const listStatus = getTaskListStatus(task);
                               const isAssignedToMe = task.assignedEmployeeIds.includes(me?.id || '');
-                              const canEditTask = canManage || isAssignedToMe;
+                              const isCreatedByMe = Boolean(me?.id && task.createdByEmployeeId === me.id);
+                              const taskApproved = isTaskApproved(task);
+                              const taskSubmittedDone = isTaskSubmittedDone(task);
+                              const approveWaiting = taskSubmittedDone && !taskApproved;
+                              const taskComplete = taskApproved || (task.status === 'COMPLETED' && !approveWaiting);
+                              const canApproveTask = approveWaiting && (isSuperAdmin || isCreatedByMe);
+                              const canSubmitDone = isAssignedToMe && !taskComplete && !taskSubmittedDone;
+                              const canEditTask = isSuperAdmin || isCreatedByMe || isAssignedToMe;
+                              const latestActionNote = [...task.notes]
+                                .reverse()
+                                .find((note) => note.markDone || note.message.trim().toLowerCase().startsWith('approved by'));
                               return (
                                 <tr id={`task-${task.id}`} key={task.id} className="scroll-mt-24 align-top target:bg-[#f4fae9]">
                                   <td className="px-4 py-4">
                                     <div className="min-w-[160px]">
                                       <p className="font-semibold text-slate-900">{task.title}</p>
                                       <p className="mt-1 text-slate-500">{task.description || 'No description provided.'}</p>
+                                      {latestActionNote ? (
+                                        <p className="mt-2 rounded-xl bg-[#f4fae9] px-3 py-2 text-xs font-medium text-slate-700">{latestActionNote.message}</p>
+                                      ) : null}
+                                      {task.qualityRating ? (
+                                        <p className="mt-2 text-xs font-semibold text-[#6f9e2c]">Quality: {formatTaskLabel(task.qualityRating)}</p>
+                                      ) : null}
+                                      {task.ncItems?.length ? (
+                                        <p className="mt-1 text-xs text-rose-600">NC: {task.ncItems.join(', ')}</p>
+                                      ) : null}
                                     </div>
                                   </td>
                                   <td className="px-4 py-4 text-slate-700">{task.assignedEmployees.map((employee) => employee.name).join(', ') || 'None'}</td>
@@ -591,14 +686,16 @@ export default function TasksPage() {
                                     <span
                                       className={[
                                         'inline-flex rounded-full px-3 py-1 text-xs font-semibold',
-                                        listStatus === 'COMPLETED'
+                                        approveWaiting
+                                          ? 'bg-amber-100 text-amber-700'
+                                          : listStatus === 'COMPLETED'
                                           ? 'bg-emerald-100 text-emerald-700'
                                           : listStatus === 'IN_PROGRESS'
                                             ? 'bg-blue-100 text-blue-700'
                                             : 'bg-slate-100 text-slate-700',
                                       ].join(' ')}
                                     >
-                                      {listStatus === 'IN_PROGRESS' ? 'Ongoing' : formatTaskLabel(listStatus)}
+                                      {approveWaiting ? 'Approve Waiting' : listStatus === 'IN_PROGRESS' ? 'Ongoing' : formatTaskLabel(listStatus)}
                                     </span>
                                   </td>
                                   <td className="px-4 py-4 text-right">
@@ -608,7 +705,7 @@ export default function TasksPage() {
                                           <button
                                             className={[
                                               'inline-flex h-8 items-center gap-1.5 bg-blue-600 px-4 text-xs font-semibold uppercase tracking-[0.14em] text-white transition hover:bg-blue-700',
-                                              canManage || (isAssignedToMe && task.status !== 'COMPLETED') ? 'rounded-l-xl' : 'rounded-xl',
+                                              canApproveTask || canSubmitDone || approveWaiting || taskComplete ? 'rounded-l-xl' : 'rounded-l-xl',
                                             ].join(' ')}
                                             onClick={() => router.push(`/tasks/${task.id}/edit`)}
                                             type="button"
@@ -616,7 +713,7 @@ export default function TasksPage() {
                                             <EditIcon className="h-6 w-4" />
                                             Edit
                                           </button>
-                                          {canManage ? (
+                                          {canDeleteRecords ? (
                                             <button
                                               aria-label="Open task actions"
                                               className="inline-flex h-8 items-center rounded-r-xl border-l border-blue-500 bg-blue-600 px-3 text-white transition hover:bg-blue-700"
@@ -628,30 +725,59 @@ export default function TasksPage() {
                                               </svg>
                                             </button>
                                           ) : null}
-                                          {!canManage && isAssignedToMe && task.status !== 'COMPLETED' ? (
+                                          {canApproveTask ? (
                                             <button
-                                              className="inline-flex h-8 items-center rounded-r-xl border-l border-[#7fb632] bg-[#8fc740] px-3 text-xs font-semibold uppercase text-[#123b76] transition hover:bg-[#7fb632] disabled:cursor-wait disabled:opacity-60"
-                                              disabled={updatingTaskId === task.id}
-                                              onClick={() => void markTaskDone(task.id)}
+                                              className={[
+                                                'inline-flex h-8 items-center ml-2 rounded-xl border-l px-3 text-xs font-semibold uppercase transition disabled:cursor-wait disabled:opacity-60',
+                                                taskApproved
+                                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                  : 'border-[#7fb632] bg-[#8fc740] text-[#123b76] hover:bg-[#7fb632]',
+                                              ].join(' ')}
+                                              disabled={taskApproved || approvingTaskId === task.id}
+                                              onClick={() => void approveTask(task.id)}
                                               type="button"
                                             >
-                                              {updatingTaskId === task.id ? 'Updating...' : 'Done'}
+                                              {taskApproved ? 'Approved' : approvingTaskId === task.id ? 'Approving...' : 'Approve'}
                                             </button>
+                                          ) : null}
+                                          {canSubmitDone ? (
+                                            <button
+                                              className="inline-flex h-8 items-center rounded-r-xl border-l border-[#7fb632] bg-[#8fc740] px-3 text-xs font-semibold uppercase text-[#123b76] transition hover:bg-[#7fb632] disabled:cursor-wait disabled:opacity-60"
+                                              disabled={submittingDoneTaskId === task.id}
+                                              onClick={() => openDoneConfirm(task)}
+                                              type="button"
+                                            >
+                                              {submittingDoneTaskId === task.id ? 'Submitting...' : 'Complete'}
+                                            </button>
+                                          ) : null}
+                                          {approveWaiting && !canApproveTask ? (
+                                            <span className="inline-flex h-8 items-center rounded-r-xl border-l border-amber-200 bg-amber-50 px-3 text-xs font-semibold uppercase text-amber-700">
+                                              Approve Waiting
+                                            </span>
+                                          ) : null}
+                                          {taskComplete ? (
+                                            <span className="inline-flex h-8 items-center ml-2 rounded-xl border-l border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold uppercase text-emerald-700">
+                                              Complete
+                                            </span>
                                           ) : null}
                                         </>
                                       ) : (
-                                        isAssignedToMe && task.status !== 'COMPLETED' ? (
+                                        canSubmitDone ? (
                                           <button
                                             className="inline-flex h-8 items-center rounded-xl bg-[#8fc740] px-1 text-xs font-semibold uppercase text-[#123b76] transition hover:bg-[#7fb632] disabled:cursor-wait disabled:opacity-60"
-                                            disabled={updatingTaskId === task.id}
-                                            onClick={() => void markTaskDone(task.id)}
+                                            disabled={submittingDoneTaskId === task.id}
+                                            onClick={() => openDoneConfirm(task)}
                                             type="button"
                                           >
-                                            {updatingTaskId === task.id ? 'Updating...' : 'Mark Done'}
+                                            {submittingDoneTaskId === task.id ? 'Submitting...' : 'Complete'}
                                           </button>
+                                        ) : approveWaiting ? (
+                                          <span className="inline-flex h-8 items-center rounded-xl bg-amber-50 px-4 text-xs font-semibold uppercase tracking-[0.14em] text-amber-700">
+                                            Approve Waiting
+                                          </span>
                                         ) : (
                                           <span className="inline-flex h-8 items-center rounded-xl bg-emerald-50 px-4 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700">
-                                            Completed
+                                            Complete
                                           </span>
                                         )
                                       )}
@@ -700,6 +826,10 @@ export default function TasksPage() {
               return null;
             }
 
+            if (!canDeleteRecords) {
+              return null;
+            }
+
             return (
               <button
                 className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm font-medium text-red-600 transition hover:bg-red-50"
@@ -740,6 +870,45 @@ export default function TasksPage() {
                 className="inline-flex items-center justify-center rounded-2xl bg-red-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-red-300"
               >
                 {deletingTaskId ? 'Submitting...' : 'Submit'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {confirmDoneTask ? (
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/35 px-4">
+          <div className="w-full max-w-md rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_24px_70px_rgba(15,23,42,0.18)]">
+            <p className="text-sm font-medium uppercase tracking-[0.28em] text-slate-400">Task Module</p>
+            <h2 className="mt-3 text-2xl font-semibold text-slate-950">Complete Task</h2>
+            <p className="mt-3 text-sm leading-7 text-slate-600">
+              {confirmDoneTask.requireProof && !confirmDoneTask.media?.length
+                ? 'This task requires an attachment. Open edit page and add Task attachments before completing.'
+                : 'Submit this task as complete?'}
+            </p>
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              <p className="font-semibold text-slate-900">{confirmDoneTask.title}</p>
+              <p className="mt-1">{confirmDoneTask.projectName}</p>
+            </div>
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeDoneConfirm}
+                className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitDoneTask(confirmDoneTask)}
+                disabled={submittingDoneTaskId === confirmDoneTask.id}
+                className="inline-flex items-center justify-center rounded-2xl bg-[#8fc740] px-5 py-3 text-sm font-semibold text-[#123b76] transition hover:bg-[#7fb632] disabled:cursor-wait disabled:opacity-60"
+              >
+                {confirmDoneTask.requireProof && !confirmDoneTask.media?.length
+                  ? 'Open Edit'
+                  : submittingDoneTaskId === confirmDoneTask.id
+                    ? 'Submitting...'
+                    : 'Submit'}
               </button>
             </div>
           </div>

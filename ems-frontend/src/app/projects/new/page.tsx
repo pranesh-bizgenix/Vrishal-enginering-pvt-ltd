@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { api, getToken } from '../../lib/api';
 import { clearAuth } from '../../lib/auth';
 import { getWorkspaceNavItems, routeSection } from '../../lib/workspace';
-import { canManageTeamRecords, getAssignableEmployeesForViewer, isAdminRole } from '../../lib/hierarchy';
+import { canCreateProjects, canManageTeamRecords, canRunReports, getAssignableEmployeesForViewer, isAdminRole } from '../../lib/hierarchy';
 import { DashboardSidebar, DashboardTopbar } from '../../../components/DashboardShell';
 import type { DashboardResponse, Employee, NavItem, Project, ProjectStatus, SectionKey } from '../../dashboard/types';
 import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
@@ -95,6 +95,7 @@ export default function NewProjectPage() {
   const me = dashboard?.employee;
   const isAdmin = isAdminRole(me?.roles ?? []);
   const canManage = canManageTeamRecords(me?.roles ?? []);
+  const canCreateProject = canCreateProjects(me?.roles ?? []);
   const navItems = useMemo<NavItem[]>(() => getWorkspaceNavItems(canManage, isAdmin, me?.roles ?? []), [canManage, isAdmin, me?.roles]);
   const initials = me?.name?.trim()?.charAt(0)?.toUpperCase() || 'A';
   const selectableEmployees = useMemo(
@@ -127,6 +128,11 @@ export default function NewProjectPage() {
 
   async function submitProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canCreateProject) {
+      setError('Only SA1 can create projects.');
+      return;
+    }
+
     const trimmedName = projectForm.name.trim();
     if (!trimmedName) {
       setError('Project Name is required.');
@@ -134,6 +140,10 @@ export default function NewProjectPage() {
     }
     if (!projectForm.assignedEmployeeIds.length) {
       setError('Assign Employees is required.');
+      return;
+    }
+    if (!projectForm.dueDate) {
+      setError('Project Due Date is required.');
       return;
     }
 
@@ -156,7 +166,7 @@ export default function NewProjectPage() {
     <main className="min-h-screen bg-[#edf2f7] text-slate-900 lg:flex">
       <DashboardSidebar activeSection="projects" navItems={navItems} onClose={() => setSidebarOpen(false)} onSelect={handleSection} open={sidebarOpen} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <DashboardTopbar canRunReport={isAdmin} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} subtitle="Task Management System" title="Create Project" />
+        <DashboardTopbar canRunReport={canRunReports(me?.roles ?? [])} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} subtitle="Task Management System" title="Create Project" />
         <section className="px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
           {error ? <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] sm:p-6 lg:p-7">
@@ -169,22 +179,16 @@ export default function NewProjectPage() {
                 </div>
                 <div className="flex flex-wrap gap-3">
                   <button className={secondaryButtonClassName} onClick={() => router.push('/projects')} type="button">Cancel</button>
-                  <button className={primaryButtonClassName} disabled={saving} type="submit">{saving ? 'Saving...' : 'Create Project'}</button>
+                  <button className={primaryButtonClassName} disabled={saving || !canCreateProject} type="submit">{saving ? 'Saving...' : 'Create Project'}</button>
                 </div>
               </div>
+              {!canCreateProject ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">Only SA1 can create projects.</div> : null}
               <div className="grid gap-4 md:grid-cols-2">
               <Field label="Project Name">
                 <input className={fieldClassName} onChange={(event) => setProjectForm({ ...projectForm, name: event.target.value })} placeholder="Project name" required value={projectForm.name} />
               </Field>
               <Field label="Project Type">
                 <input className={fieldClassName} onChange={(event) => setProjectForm({ ...projectForm, projectType: event.target.value })} placeholder="Project type" value={projectForm.projectType} />
-              </Field>
-              <Field label="Project Status">
-                <select className={fieldClassName} onChange={(event) => setProjectForm({ ...projectForm, projectStatus: event.target.value as ProjectStatus })} value={projectForm.projectStatus}>
-                  {projectStatusOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
               </Field>
                <Field label="Project Description">
                 <textarea className={`${fieldClassName} min-h-20 resize-y`} onChange={(event) => setProjectForm({ ...projectForm, description: event.target.value })} placeholder="Description" value={projectForm.description} />
@@ -223,6 +227,13 @@ export default function NewProjectPage() {
                   ) : null}
                 </div>
               </div>
+              <Field label="Project Status">
+                <select className={fieldClassName} onChange={(event) => setProjectForm({ ...projectForm, projectStatus: event.target.value as ProjectStatus })} value={projectForm.projectStatus}>
+                  {projectStatusOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </Field>
               <Field label="Project Due Date">
                 <input className={fieldClassName} onChange={(event) => setProjectForm({ ...projectForm, dueDate: event.target.value })} type="datetime-local" value={projectForm.dueDate} />
               </Field>

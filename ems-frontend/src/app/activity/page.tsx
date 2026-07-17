@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { api, getToken } from '../lib/api';
 import { clearAuth } from '../lib/auth';
 import { getWorkspaceNavItems, routeSection } from '../lib/workspace';
-import { canManageTeamRecords, canViewerSeeEmployee, formatRoleName, getHighestRolePower, isAdminRole } from '../lib/hierarchy';
+import { canManageTeamRecords, canRunReports, canViewerSeeEmployee, formatRoleName, getHighestRolePower, isAdminRole } from '../lib/hierarchy';
 import { DashboardSidebar, DashboardTopbar } from '../../components/DashboardShell';
 import { PaginationBar } from '../../components/PaginationBar';
 import type { DashboardResponse, Employee, NavItem, NotificationLog, PaginatedResponse, SectionKey } from '../dashboard/types';
@@ -53,7 +53,8 @@ export default function ActivityPage() {
         api<Employee[]>('/employees'),
       ]);
       const currentUser = dashboardData.employee;
-      const selectableEmployees = canManageTeamRecords(currentUser.roles)
+      const canViewAllNotifications = currentUser.roles.includes('SA1') || currentUser.roles.includes('SA2');
+      const selectableEmployees = canViewAllNotifications
         ? employeeData.filter((employee) => employee.id !== currentUser.id && canViewerSeeEmployee(currentUser, employee))
         : [];
       const safeSelectedPersonId = selectedPersonId && selectableEmployees.some((employee) => employee.id === selectedPersonId)
@@ -93,13 +94,14 @@ export default function ActivityPage() {
 
   const me = dashboard?.employee;
   const isAdmin = isAdminRole(me?.roles ?? []);
+  const isSuperAdmin = Boolean(me?.roles.includes('SA1') || me?.roles.includes('SA2'));
   const canManage = canManageTeamRecords(me?.roles ?? []);
   const navItems = useMemo<NavItem[]>(() => getWorkspaceNavItems(canManage, isAdmin, me?.roles ?? []), [canManage, isAdmin, me?.roles]);
   const initials = me?.name?.trim()?.charAt(0)?.toUpperCase() || 'A';
   const selectedPerson = useMemo(() => employees.find((employee) => employee.id === selectedPersonId) || null, [employees, selectedPersonId]);
-  const scopedRecipientName = selectedPerson?.name || (!isAdmin ? me?.name : '');
+  const scopedRecipientName = selectedPerson?.name || (!isSuperAdmin ? me?.name : '');
   const sidebarPeopleFilter = useMemo(() => {
-    if (!me || !canManage) {
+    if (!me || !isSuperAdmin) {
       return [];
     }
 
@@ -117,7 +119,7 @@ export default function ActivityPage() {
         projectCount: employee.currentProjectIds?.length ?? 0,
         taskCount: 0,
       }));
-  }, [canManage, employees, me]);
+  }, [employees, isSuperAdmin, me]);
   const totalPages = Math.max(1, Math.ceil(totalLogs / perPage));
   useEffect(() => {
     setPage(1);
@@ -175,7 +177,9 @@ export default function ActivityPage() {
     <main className="min-h-screen bg-[#edf2f7] text-slate-900 lg:flex">
       <DashboardSidebar activeSection="activity" navItems={navItems} onClose={() => setSidebarOpen(false)} onSelect={handleSection} open={sidebarOpen} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <DashboardTopbar canRunReport={isAdmin} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} peopleFilter={sidebarPeopleFilter} peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'} selectedPersonId={selectedPersonId} onSelectPerson={canManage ? handlePersonScopeChange : undefined} subtitle="Task Management System" title="Activity" />
+        <DashboardTopbar canRunReport={canRunReports(me?.roles ?? [])} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} peopleFilter={sidebarPeopleFilter} 
+        // peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'} 
+        selectedPersonId={selectedPersonId} onSelectPerson={canManage ? handlePersonScopeChange : undefined} subtitle="Task Management System" title="Activity" />
         <section className="px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
           {error ? <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] sm:p-6 lg:p-7">

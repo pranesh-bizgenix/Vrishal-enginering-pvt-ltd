@@ -7,7 +7,8 @@ import {
 import { CoreService } from '../core/core.service';
 import { WhatsappService } from './whatsapp.service';
 
-const ADMIN_REPORT_ROLES = ['SA1', 'SA2', 'ADMIN', 'LEADER', 'EMPLOYEE'];
+const ADMIN_REPORT_ROLES = ['SA1'];
+const ADMIN_REPORT_EMAILS = ['admin@sjsangath.com'];
 
 type MisSummary = {
   generatedAt: string;
@@ -54,6 +55,7 @@ type MonthlyReportSummary = {
   periodEnd: string;
   totalTasks: number;
   pendingTasks: number;
+  ongoingTasks: number;
   completedTasks: number;
   overdueTasks: number;
   completionRate: number;
@@ -61,6 +63,7 @@ type MonthlyReportSummary = {
     employeeId: string;
     employeeName: string;
     pending: number;
+    ongoing: number;
     completed: number;
     overdue: number;
   }>;
@@ -73,6 +76,11 @@ type MonthlyReportSummary = {
     createdAt: string;
     overdue: boolean;
   }>;
+};
+
+type ReportPeriod = {
+  start: Date;
+  end: Date;
 };
 
 @Injectable()
@@ -111,16 +119,31 @@ export class ReportService {
     return '';
   }
 
-  private async getRecipientPhonesByRoles(roles: string[]) {
+  private async getRecipientPhonesByRoles(roles: string[], emails?: string[]) {
+    const normalizedEmails = (emails || [])
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean);
     const rows = await this.query<
       Array<{ phone: string | null }> extends (infer T)[] ? T : never
     >(
-      `SELECT phone
-       FROM employees
-       WHERE deleted_at IS NULL
-         AND is_active = TRUE
-         AND roles && $1::varchar[]`,
-      [roles],
+      `SELECT e.phone
+       FROM employees e
+       LEFT JOIN users u
+         ON u.employee_id = e.id
+        AND u.deleted_at IS NULL
+       WHERE e.deleted_at IS NULL
+         AND e.is_active = TRUE
+         AND (
+           (
+             COALESCE(array_length($2::varchar[], 1), 0) > 0
+             AND LOWER(u.email) = ANY($2::varchar[])
+           )
+           OR (
+             COALESCE(array_length($2::varchar[], 1), 0) = 0
+             AND e.roles && $1::varchar[]
+           )
+         )`,
+      [roles, normalizedEmails],
     );
 
     return Array.from(
@@ -171,7 +194,37 @@ export class ReportService {
     return Number(rows[0]?.count || '0') > 0;
   }
 
-  private async buildMisSummary(): Promise<MisSummary> {
+  private getDayPeriod(value = new Date()): ReportPeriod {
+    const start = new Date(value);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    return { start, end };
+  }
+
+  private getWeekToDatePeriod(value = new Date()): ReportPeriod {
+    const start = new Date(value);
+    start.setHours(0, 0, 0, 0);
+    const day = start.getDay();
+    start.setDate(start.getDate() - (day === 0 ? 6 : day - 1));
+    const end = new Date(value);
+    end.setHours(0, 0, 0, 0);
+    end.setDate(end.getDate() + 1);
+    return { start, end };
+  }
+
+  private getMonthToDatePeriod(value = new Date()): ReportPeriod {
+    const start = new Date(value.getFullYear(), value.getMonth(), 1);
+    const end = new Date(value);
+    end.setHours(0, 0, 0, 0);
+    end.setDate(end.getDate() + 1);
+    return { start, end };
+  }
+
+  private async buildMisSummary(period?: ReportPeriod): Promise<MisSummary> {
+    const params = period ? [period.start.toISOString(), period.end.toISOString()] : undefined;
+    const taskPeriodFilter = period ? 'AND t.created_at >= $1::timestamptz AND t.created_at < $2::timestamptz' : '';
+    const projectPeriodFilter = period ? 'AND p.created_at >= $1::timestamptz AND p.created_at < $2::timestamptz' : '';
     const [
       activeProjectRows,
       taskBreakdownRows,
@@ -180,10 +233,12 @@ export class ReportService {
     ] = await Promise.all([
       this.query<Array<{ count: string }> extends (infer T)[] ? T : never>(
         `SELECT COUNT(*)::text AS count
-         FROM projects
-         WHERE deleted_at IS NULL
-           AND active = TRUE
-           AND project_status <> 'COMPLETED'`,
+         FROM projects p
+         WHERE p.deleted_at IS NULL
+           AND p.active = TRUE
+           AND p.project_status <> 'COMPLETED'
+           ${projectPeriodFilter}`,
+        params,
       ),
       this.query<
         Array<{ status: string; count: string }> extends (infer T)[] ? T : never
@@ -195,7 +250,9 @@ export class ReportService {
            AND p.deleted_at IS NULL
            AND p.active = TRUE
            AND p.project_status <> 'COMPLETED'
+           ${taskPeriodFilter}
          GROUP BY status`,
+        params,
       ),
       this.query<
         Array<{
@@ -222,8 +279,10 @@ export class ReportService {
            AND p.project_status <> 'COMPLETED'
            AND p.due_date IS NOT NULL
            AND p.due_date < NOW()
+           ${projectPeriodFilter}
          GROUP BY p.id, p.name, p.due_date
          ORDER BY p.due_date ASC`,
+        params,
       ),
       this.query<
         Array<{
@@ -245,6 +304,7 @@ export class ReportService {
          LEFT JOIN tasks t
            ON t.id = ta.task_id
           AND t.deleted_at IS NULL
+          ${taskPeriodFilter}
          LEFT JOIN projects p
            ON p.id = t.project_id
           AND p.deleted_at IS NULL
@@ -254,6 +314,7 @@ export class ReportService {
            AND e.is_active = TRUE
          GROUP BY e.id, e.name
          ORDER BY e.name ASC`,
+        params,
       ),
     ]);
 
@@ -291,7 +352,8 @@ export class ReportService {
     };
   }
 
-  private async buildDailySummary(): Promise<DailyPendingSummary> {
+  private async buildDailySummary(period = this.getDayPeriod()): Promise<DailyPendingSummary> {
+    const params = [period.start.toISOString(), period.end.toISOString()];
     const [totalRows, projectRows, employeeRows] = await Promise.all([
       this.query<Array<{ count: string }> extends (infer T)[] ? T : never>(
         `SELECT COUNT(*)::text AS count
@@ -301,7 +363,10 @@ export class ReportService {
            AND t.status <> 'COMPLETED'
            AND p.deleted_at IS NULL
            AND p.active = TRUE
-           AND p.project_status <> 'COMPLETED'`,
+           AND p.project_status <> 'COMPLETED'
+           AND t.created_at >= $1::timestamptz
+           AND t.created_at < $2::timestamptz`,
+        params,
       ),
       this.query<
         Array<{
@@ -321,11 +386,14 @@ export class ReportService {
            ON t.project_id = p.id
           AND t.deleted_at IS NULL
           AND t.status <> 'COMPLETED'
+          AND t.created_at >= $1::timestamptz
+          AND t.created_at < $2::timestamptz
          WHERE p.deleted_at IS NULL
            AND p.active = TRUE
            AND p.project_status <> 'COMPLETED'
          GROUP BY p.id, p.name
          ORDER BY p.name ASC`,
+        params,
       ),
       this.query<
         Array<{
@@ -347,6 +415,8 @@ export class ReportService {
          LEFT JOIN tasks t
            ON t.id = ta.task_id
           AND t.deleted_at IS NULL
+          AND t.created_at >= $1::timestamptz
+          AND t.created_at < $2::timestamptz
          LEFT JOIN projects p
            ON p.id = t.project_id
           AND p.deleted_at IS NULL
@@ -356,6 +426,7 @@ export class ReportService {
            AND e.is_active = TRUE
          GROUP BY e.id, e.name
          ORDER BY e.name ASC`,
+        params,
       ),
     ]);
 
@@ -378,12 +449,7 @@ export class ReportService {
 
   private async buildMonthlyReportSummary(): Promise<MonthlyReportSummary> {
     const now = new Date();
-    const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const periodEnd = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate() + 1,
-    );
+    const { start: periodStart, end: periodEnd } = this.getMonthToDatePeriod(now);
     const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const periodParams = [periodStart.toISOString(), periodEnd.toISOString()];
     const [totalRows, employeeRows, taskRows] = await Promise.all([
@@ -391,6 +457,7 @@ export class ReportService {
         Array<{
           total: string;
           pending: string;
+          ongoing: string;
           completed: string;
           overdue: string;
         }> extends (infer T)[]
@@ -399,7 +466,8 @@ export class ReportService {
       >(
         `SELECT
            COUNT(t.id)::text AS total,
-           COUNT(t.id) FILTER (WHERE t.status <> 'COMPLETED')::text AS pending,
+           COUNT(t.id) FILTER (WHERE t.status = 'PENDING')::text AS pending,
+           COUNT(t.id) FILTER (WHERE t.status = 'IN_PROGRESS')::text AS ongoing,
            COUNT(t.id) FILTER (WHERE t.status = 'COMPLETED')::text AS completed,
            COUNT(t.id) FILTER (WHERE t.status <> 'COMPLETED' AND t.due_date IS NOT NULL AND t.due_date < NOW())::text AS overdue
          FROM tasks t
@@ -415,6 +483,7 @@ export class ReportService {
           employeeId: string;
           employeeName: string;
           pending: string;
+          ongoing: string;
           completed: string;
           overdue: string;
         }> extends (infer T)[]
@@ -424,7 +493,8 @@ export class ReportService {
         `SELECT
            e.id AS "employeeId",
            e.name AS "employeeName",
-           COUNT(t.id) FILTER (WHERE t.status <> 'COMPLETED')::text AS pending,
+           COUNT(t.id) FILTER (WHERE t.status = 'PENDING')::text AS pending,
+           COUNT(t.id) FILTER (WHERE t.status = 'IN_PROGRESS')::text AS ongoing,
            COUNT(t.id) FILTER (WHERE t.status = 'COMPLETED')::text AS completed,
            COUNT(t.id) FILTER (WHERE t.status <> 'COMPLETED' AND t.due_date IS NOT NULL AND t.due_date < NOW())::text AS overdue
          FROM employees e
@@ -486,6 +556,7 @@ export class ReportService {
       periodEnd: new Date(periodEnd.getTime() - 1).toISOString(),
       totalTasks,
       pendingTasks: Number(totals?.pending || '0'),
+      ongoingTasks: Number(totals?.ongoing || '0'),
       completedTasks,
       overdueTasks: Number(totals?.overdue || '0'),
       completionRate: totalTasks
@@ -495,6 +566,7 @@ export class ReportService {
         employeeId: row.employeeId,
         employeeName: row.employeeName,
         pending: Number(row.pending || '0'),
+        ongoing: Number(row.ongoing || '0'),
         completed: Number(row.completed || '0'),
         overdue: Number(row.overdue || '0'),
       })),
@@ -590,8 +662,11 @@ export class ReportService {
   }
 
   private buildDailyEmployeeTaskBreakdown(summary: DailyPendingSummary) {
-    return summary.employeeTaskBreakdown.length
-      ? summary.employeeTaskBreakdown
+    const employeesWithTodayData = summary.employeeTaskBreakdown.filter(
+      (employee) => employee.pending > 0 || employee.completed > 0,
+    );
+    return employeesWithTodayData.length
+      ? employeesWithTodayData
           .map(
             (employee) =>
               `${employee.employeeName}: Pending ${employee.pending}, Completed ${employee.completed}`,
@@ -610,8 +685,11 @@ export class ReportService {
   }
 
   private buildDailyEmployeeTaskTemplateValue(summary: DailyPendingSummary) {
-    return summary.employeeTaskBreakdown.length
-      ? summary.employeeTaskBreakdown
+    const employeesWithTodayData = summary.employeeTaskBreakdown.filter(
+      (employee) => employee.pending > 0 || employee.completed > 0,
+    );
+    return employeesWithTodayData.length
+      ? employeesWithTodayData
           .map(
             (employee) =>
               `${employee.employeeName}: Pending ${employee.pending}, Completed ${employee.completed}`,
@@ -625,7 +703,7 @@ export class ReportService {
       ? summary.employeeTaskBreakdown
           .map(
             (employee) =>
-              `${employee.employeeName}: Pending ${employee.pending}, Completed ${employee.completed}, Overdue ${employee.overdue}`,
+              `${employee.employeeName}: Pending ${employee.pending}, Ongoing ${employee.ongoing}, Completed ${employee.completed}, Overdue ${employee.overdue}`,
           )
           .join('\n')
       : 'No employee task data';
@@ -636,7 +714,7 @@ export class ReportService {
       ? summary.employeeTaskBreakdown
           .map(
             (employee) =>
-              `${employee.employeeName}: Pending ${employee.pending}, Completed ${employee.completed}, Overdue ${employee.overdue}`,
+              `${employee.employeeName}: Pending ${employee.pending}, Ongoing ${employee.ongoing}, Completed ${employee.completed}, Overdue ${employee.overdue}`,
           )
           .join(', ')
       : 'No employee task data';
@@ -649,6 +727,7 @@ export class ReportService {
       `Month: ${summary.month}`,
       `Total tasks: ${summary.totalTasks}`,
       `Pending tasks: ${summary.pendingTasks}`,
+      `Ongoing tasks: ${summary.ongoingTasks}`,
       `Completed tasks: ${summary.completedTasks}`,
       `Overdue tasks: ${summary.overdueTasks}`,
       `Completion rate: ${summary.completionRate}%`,
@@ -873,9 +952,10 @@ export class ReportService {
       rect(left, y - 21, contentWidth, 22);
       setFill(0.12, 0.22, 0.38);
       addTextAt('Employee', left + 10, y - 14, 9);
-      addTextAt('Pending', 345, y - 14, 9);
-      addTextAt('Done', 410, y - 14, 9);
-      addTextAt('Overdue', 470, y - 14, 9);
+      addTextAt('Pending', 315, y - 14, 9);
+      addTextAt('Ongoing', 380, y - 14, 9);
+      addTextAt('Done', 445, y - 14, 9);
+      addTextAt('Overdue', 500, y - 14, 9);
       setFill(0, 0, 0);
       y -= 25;
     };
@@ -916,15 +996,15 @@ export class ReportService {
     );
     addKpiCard(
       left + 318,
-      'Overdue',
-      String(summary.overdueTasks),
-      [0.82, 0.16, 0.16],
+      'Ongoing',
+      String(summary.ongoingTasks),
+      [0.12, 0.36, 0.8],
     );
     addKpiCard(
       left + 424,
-      'Completion',
-      `${summary.completionRate}%`,
-      [0.31, 0.27, 0.9],
+      'Overdue',
+      String(summary.overdueTasks),
+      [0.82, 0.16, 0.16],
     );
     y -= 76;
 
@@ -942,9 +1022,10 @@ export class ReportService {
         rect(left, y - 17, contentWidth, 20, 'S');
         setFill(0.1, 0.14, 0.22);
         addTextAt(employee.employeeName.slice(0, 42), left + 10, y - 10, 9);
-        addTextAt(String(employee.pending), 355, y - 10, 9);
-        addTextAt(String(employee.completed), 420, y - 10, 9);
-        addTextAt(String(employee.overdue), 485, y - 10, 9);
+        addTextAt(String(employee.pending), 325, y - 10, 9);
+        addTextAt(String(employee.ongoing), 390, y - 10, 9);
+        addTextAt(String(employee.completed), 455, y - 10, 9);
+        addTextAt(String(employee.overdue), 515, y - 10, 9);
         y -= 20;
       }
     } else {
@@ -1011,8 +1092,12 @@ export class ReportService {
     templateName: string,
     parameters: string[],
     logMessage: string,
+    recipientEmails?: string[],
   ) {
-    const recipients = await this.getRecipientPhonesByRoles(recipientRoles);
+    const recipients = await this.getRecipientPhonesByRoles(
+      recipientRoles,
+      recipientEmails,
+    );
     const delivery = await this.whatsappService.sendTemplate(recipients, {
       name: templateName,
       parameters,
@@ -1036,8 +1121,12 @@ export class ReportService {
     bodyParameters: string[],
     document: { filename: string; buffer: Buffer; mimeType?: string },
     logMessage: string,
+    recipientEmails?: string[],
   ) {
-    const recipients = await this.getRecipientPhonesByRoles(recipientRoles);
+    const recipients = await this.getRecipientPhonesByRoles(
+      recipientRoles,
+      recipientEmails,
+    );
     const delivery = await this.whatsappService.sendDocumentTemplate(
       recipients,
       {
@@ -1082,10 +1171,8 @@ export class ReportService {
 
   async runWeeklyMisReport(force = false) {
     const now = new Date();
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 1);
+    const { start, end } = this.getDayPeriod(now);
+    const weeklyPeriod = this.getWeekToDatePeriod(now);
     const category = 'Weekly MIS Auto';
 
     if (
@@ -1099,7 +1186,7 @@ export class ReportService {
       return { success: true, skipped: true };
     }
 
-    const weeklyMis = await this.buildMisSummary();
+    const weeklyMis = await this.buildMisSummary(weeklyPeriod);
     const delivery = await this.dispatchWhatsappTemplateReport(
       category,
       ADMIN_REPORT_ROLES,
@@ -1110,6 +1197,7 @@ export class ReportService {
         this.buildMisOverdueProjectTemplateValue(weeklyMis),
       ],
       this.buildMisWhatsappMessage(weeklyMis),
+      ADMIN_REPORT_EMAILS,
     );
 
     return {
@@ -1122,8 +1210,7 @@ export class ReportService {
 
   async runMonthlyReport(force = false) {
     const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth(), 1);
-    const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const { start, end } = this.getMonthToDatePeriod(now);
     const category = 'Monthly TMS Auto';
 
     if (
@@ -1150,6 +1237,7 @@ export class ReportService {
         mimeType: 'application/pdf',
       },
       this.buildMonthlyWhatsappMessage(monthlyReport),
+      ADMIN_REPORT_EMAILS,
     );
 
     return {
@@ -1162,10 +1250,7 @@ export class ReportService {
 
   async runDailyPendingReport(force = false) {
     const now = new Date();
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 1);
+    const { start, end } = this.getDayPeriod(now);
     const category = 'Daily Pending Auto';
 
     if (
@@ -1179,7 +1264,7 @@ export class ReportService {
       return { success: true, skipped: true };
     }
 
-    const dailyPending = await this.buildDailySummary();
+    const dailyPending = await this.buildDailySummary({ start, end });
     const [delivery] = await Promise.all([
       this.dispatchWhatsappTemplateReport(
         category,
@@ -1190,6 +1275,7 @@ export class ReportService {
           `${this.buildDailyProjectTemplateValue(dailyPending)} | Employee-wise: ${this.buildDailyEmployeeTaskTemplateValue(dailyPending)}`,
         ],
         this.buildDailyWhatsappMessage(dailyPending),
+        ADMIN_REPORT_EMAILS,
       ),
     ]);
 
@@ -1212,11 +1298,12 @@ export class ReportService {
   // }
 
   async runScheduledReports(authorization?: string) {
-    await this.emsService.requireAdminAccess(authorization);
+    await this.emsService.requireReportAccess(authorization);
 
+    const now = new Date();
     const [weeklyMis, dailyPending, monthlyReport] = await Promise.all([
-      this.buildMisSummary(),
-      this.buildDailySummary(),
+      this.buildMisSummary(this.getWeekToDatePeriod(now)),
+      this.buildDailySummary(this.getDayPeriod(now)),
       this.buildMonthlyReportSummary(),
     ]);
 
@@ -1236,6 +1323,7 @@ export class ReportService {
           this.buildMisOverdueProjectTemplateValue(weeklyMis),
         ],
         this.buildMisWhatsappMessage(weeklyMis),
+        ADMIN_REPORT_EMAILS,
       ),
       this.dispatchWhatsappTemplateReport(
         'Daily Pending Manual',
@@ -1246,6 +1334,7 @@ export class ReportService {
           `${this.buildDailyProjectTemplateValue(dailyPending)} | Employee-wise: ${this.buildDailyEmployeeTaskTemplateValue(dailyPending)}`,
         ],
         this.buildDailyWhatsappMessage(dailyPending),
+        ADMIN_REPORT_EMAILS,
       ),
       this.dispatchWhatsappDocumentTemplateReport(
         'Monthly TMS Manual',
@@ -1258,6 +1347,7 @@ export class ReportService {
           mimeType: 'application/pdf',
         },
         this.buildMonthlyWhatsappMessage(monthlyReport),
+        ADMIN_REPORT_EMAILS,
       ),
     ]);
 

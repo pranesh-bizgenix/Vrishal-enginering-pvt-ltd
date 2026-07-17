@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { api, getToken, Role } from '../lib/api';
 import { clearAuth } from '../lib/auth';
 import { getWorkspaceNavItems, routeSection } from '../lib/workspace';
-import { canManageTeamRecords, formatRoleName, getAssignableRolesForViewer, isAdminRole, roleOrder } from '../lib/hierarchy';
+import { canManageTeamRecords, canRunReports, formatRoleName, getAssignableRolesForViewer, isAdminRole, roleOrder } from '../lib/hierarchy';
 import { DashboardSidebar, DashboardTopbar } from '../../components/DashboardShell';
 import type { DashboardResponse, Employee, Meta, NavItem, SectionKey } from '../dashboard/types';
 import { ChevronUpIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
@@ -69,6 +69,26 @@ const roleFallback: Role[] = roleOrder;
 
 const createInitialForm = (): EmployeeFormState => getInitialState();
 
+function canEditEmployeeRecord(viewer: Employee | undefined, employee: EmployeeEditorRecord | null, mode: 'create' | 'edit') {
+  if (!viewer) {
+    return false;
+  }
+
+  if (mode === 'create') {
+    return viewer.roles.includes('SA1') || viewer.roles.includes('SA2');
+  }
+
+  if (!employee) {
+    return false;
+  }
+
+  if (viewer.roles.includes('SA1')) {
+    return true;
+  }
+
+  return viewer.roles.includes('SA2') && !employee.roles.includes('SA1');
+}
+
 function formatRoleLabel(role: Role) {
   return formatRoleName(role);
 }
@@ -92,6 +112,7 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [rolesOpen, setRolesOpen] = useState(false);
   const [error, setError] = useState('');
+  const [editingEmployee, setEditingEmployee] = useState<EmployeeEditorRecord | null>(null);
 
   const loadData = useCallback(async () => {
     setError('');
@@ -117,6 +138,7 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
           return;
         }
 
+        setEditingEmployee(currentEmployee);
         setForm(getInitialState(currentEmployee));
       }
     } catch (loadError) {
@@ -161,6 +183,7 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
   const canManage = canManageTeamRecords(me?.roles ?? []);
   const initials = me?.name?.trim()?.charAt(0)?.toUpperCase() || 'A';
   const isEditingSelf = mode === 'edit' && Boolean(employeeId && me?.id === employeeId);
+  const canEditEmployee = canEditEmployeeRecord(me, editingEmployee, mode);
   const navItems: NavItem[] = getWorkspaceNavItems(canManage, isAdmin, me?.roles ?? []);
   const assignableRoles = getAssignableRolesForViewer(me?.roles ?? []);
   const roleOptions = (meta.roles.length ? meta.roles : roleFallback).filter((role) => assignableRoles.includes(role));
@@ -199,6 +222,10 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canEditEmployee) {
+      setError(mode === 'edit' ? 'You do not have permission to edit this employee.' : 'You do not have permission to create employees.');
+      return;
+    }
     const trimmedName = form.name.trim();
     if (!trimmedName) {
       setError('Employee Name is required.');
@@ -280,7 +307,7 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <DashboardTopbar
-          canRunReport={isAdmin}
+          canRunReport={canRunReports(me?.roles ?? [])}
           initials={initials}
           userEmail={me?.email ?? ''}
           userName={me?.name ?? 'Admin'}
@@ -292,6 +319,11 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
         />
 
         <section className="px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
+          {dashboard && !canEditEmployee ? (
+            <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
+              {mode === 'edit' ? 'You can view this employee, but you do not have permission to edit.' : 'Only SA1 or SA2 can create employees.'}
+            </div>
+          ) : null}
           {error ? (
             <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {error}
@@ -316,7 +348,7 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
                 <button className={secondaryButtonClassName} onClick={() => router.push('/employees')} type="button">
                   Cancel
                 </button>
-                <button className={primaryButtonClassName} disabled={saving} type="submit">
+                <button className={primaryButtonClassName} disabled={saving || !canEditEmployee} type="submit">
                   {saving ? 'Saving...' : mode === 'edit' ? 'Update Employee' : 'Create Employee'}
                 </button>
               </div>
@@ -326,6 +358,7 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
                 <Field label="Employee Name">
                   <input
                     className={fieldClassName}
+                    disabled={!canEditEmployee}
                     onChange={(event) => updateField('name', event.target.value)}
                     placeholder="Employee name"
                     value={form.name}
@@ -336,7 +369,12 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
                     <button
                       aria-expanded={rolesOpen}
                       className={`${fieldClassName} flex items-center justify-between gap-3 pr-12 text-left`}
-                      onClick={() => setRolesOpen((current) => !current)}
+                      onClick={() => {
+                        if (!canEditEmployee) {
+                          return;
+                        }
+                        setRolesOpen((current) => !current);
+                      }}
                       type="button"
                     >
                       <span className={form.roles.length ? 'text-slate-900' : 'text-slate-400'}>
@@ -350,13 +388,14 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
                     )}
                   </Field>
 
-                  {rolesOpen ? (
+                  {rolesOpen && canEditEmployee ? (
                     <div className="absolute left-0 right-0 z-20 mt-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_18px_45px_rgba(15,23,42,0.12)]">
                       <div className="grid gap-2 md:grid-cols-2">
                         {roleOptions.map((role) => (
                           <label key={role} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700 transition hover:border-slate-300 hover:bg-slate-100">
                             <input
                               checked={form.roles.includes(role)}
+                              disabled={!canEditEmployee}
                               onChange={() => toggleRole(role)}
                               type="checkbox"
                             />
@@ -377,6 +416,7 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
                     </span>
                     <input
                       className="w-full bg-transparent px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400"
+                      disabled={!canEditEmployee}
                       inputMode="numeric"
                       maxLength={10}
                       onChange={(event) => updateField('phone', event.target.value.replace(/\D/g, '').slice(0, 10))}
@@ -390,6 +430,7 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
               <label className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-700">
                 <input
                   checked={form.isActive}
+                  disabled={!canEditEmployee}
                   onChange={(event) => updateField('isActive', event.target.checked)}
                   className="h-4 w-4 rounded border-slate-300"
                   type="checkbox"
@@ -402,6 +443,7 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
                   <input
                     type="checkbox"
                     checked={form.loginEnabled}
+                    disabled={!canEditEmployee}
                     onChange={(e) => updateField('loginEnabled', e.target.checked)}
                     className="h-4 w-4 rounded border-slate-300"
                   />
@@ -414,18 +456,21 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
                       <input
                         type="email"
                         value={form.loginEmail}
+                        disabled={!canEditEmployee}
                         onChange={(e) => updateField('loginEmail', e.target.value)}
                         className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none"
                         required={form.loginEnabled}
+                        placeholder="Enter email"
                       />
                     </Field>
                     <Field label={mode === 'create' ? 'Login Password' : 'Reset Password'}>
                       <input
                         type="password"
                         value={form.loginPassword}
+                        disabled={!canEditEmployee}
                         onChange={(e) => updateField('loginPassword', e.target.value)}
                         className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none"
-                        placeholder={mode === 'create' ? 'Enter login password' : 'Leave blank to keep current password'}
+                        placeholder={mode === 'create' ? 'Enter password' : 'Leave blank to keep current password'}
                         required={mode === 'create' && form.loginEnabled && !form.password.trim()}
                       />
                     </Field>

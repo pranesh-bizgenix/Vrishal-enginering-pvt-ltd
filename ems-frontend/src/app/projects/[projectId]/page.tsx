@@ -5,9 +5,9 @@ import { useParams, useRouter } from 'next/navigation';
 import { api, getToken } from '../../lib/api';
 import { clearAuth } from '../../lib/auth';
 import { getWorkspaceNavItems, routeSection } from '../../lib/workspace';
-import { canManageTeamRecords, isAdminRole } from '../../lib/hierarchy';
+import { canManageTeamRecords, canRunReports, isAdminRole } from '../../lib/hierarchy';
 import { DashboardSidebar, DashboardTopbar } from '../../../components/DashboardShell';
-import type { DashboardResponse, NavItem, Project, SectionKey, Task } from '../../dashboard/types';
+import type { DashboardResponse, NavItem, Project, SectionKey, Task, TaskMedia } from '../../dashboard/types';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 
 function EmptyState({ message }: { message: string }) {
@@ -28,6 +28,30 @@ type TaskDraft = {
   completed: boolean;
 };
 
+function getTaskMediaType(file: File): TaskMedia['type'] {
+  return file.type.startsWith('image/') ? 'PHOTO' : 'DOCUMENT';
+}
+
+function isSupportedTaskFile(file: File) {
+  return file.type.startsWith('image/') || /\.(pdf|docx?|xlsx?|csv|txt|rtf|pptx?)$/i.test(file.name);
+}
+
+function readFileAsTaskMedia(file: File, createdById?: string | null): Promise<TaskMedia> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({
+      id: crypto.randomUUID(),
+      type: getTaskMediaType(file),
+      url: String(reader.result || ''),
+      label: file.name,
+      mimeType: file.type,
+      createdById: createdById || null,
+    });
+    reader.onerror = () => reject(reader.error || new Error('Unable to read file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function ProjectViewPage() {
   const params = useParams<{ projectId: string }>();
   const router = useRouter();
@@ -35,9 +59,11 @@ export default function ProjectViewPage() {
   const [project, setProject] = useState<Project | null>(null);
   const [taskDrafts, setTaskDrafts] = useState<Record<string, TaskDraft>>({});
   const [updatingTasks, setUpdatingTasks] = useState(false);
+  const [uploadingTaskId, setUploadingTaskId] = useState<string | null>(null);
   const [removingTaskId, setRemovingTaskId] = useState<string | null>(null);
   const [confirmTask, setConfirmTask] = useState<Task | null>(null);
   const [confirmUpdateOpen, setConfirmUpdateOpen] = useState(false);
+  const [previewMedia, setPreviewMedia] = useState<TaskMedia | null>(null);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -94,26 +120,32 @@ export default function ProjectViewPage() {
 
   const me = dashboard?.employee;
   const isAdmin = isAdminRole(me?.roles ?? []);
+  const canEditProject = Boolean(me?.roles.includes('SA1'));
+  const canViewAllProjectTasks = Boolean(me?.roles.includes('SA1') || me?.roles.includes('SA2'));
   const canManage = canManageTeamRecords(me?.roles ?? []);
   const navItems = useMemo<NavItem[]>(() => getWorkspaceNavItems(canManage, isAdmin, me?.roles ?? []), [canManage, isAdmin, me?.roles]);
   const initials = me?.name?.trim()?.charAt(0)?.toUpperCase() || 'A';
+  const canToggleTaskStatus = useCallback((task: Task) => Boolean(
+    me && (canViewAllProjectTasks || task.assignedEmployeeIds.includes(me.id)),
+  ), [canViewAllProjectTasks, me]);
   const visibleProjectTasks = useMemo(() => {
     if (!project || !me) {
       return [];
     }
 
-    if (isAdmin) {
+    if (canViewAllProjectTasks) {
       return project.tasks;
     }
 
     return project.tasks.filter((task) => task.assignedEmployeeIds.includes(me.id));
-  }, [isAdmin, me, project]);
+  }, [canViewAllProjectTasks, me, project]);
+  const canUpdateVisibleTasks = visibleProjectTasks.some((task) => canEditProject || canToggleTaskStatus(task));
   const employeeTaskSummary = useMemo(() => {
     if (!project || !me) {
       return [];
     }
 
-    const employeesToShow = isAdmin ? project.assignedEmployees : project.assignedEmployees.filter((employee) => employee.id === me.id);
+    const employeesToShow = canViewAllProjectTasks ? project.assignedEmployees : project.assignedEmployees.filter((employee) => employee.id === me.id);
 
     return employeesToShow.map((employee) => {
       const employeeTasks = visibleProjectTasks.filter((task) => task.assignedEmployeeIds.includes(employee.id));
@@ -126,7 +158,7 @@ export default function ProjectViewPage() {
         completedTasks,
       };
     });
-  }, [isAdmin, me, project, visibleProjectTasks]);
+  }, [canViewAllProjectTasks, me, project, visibleProjectTasks]);
 
   useEffect(() => {
     setOpenEmployeeSections((current) => {
@@ -156,6 +188,51 @@ export default function ProjectViewPage() {
     };
   }
 
+  function getTaskMediaLabel(media: TaskMedia) {
+    return media.label || (media.type === 'PHOTO' ? 'Photo file' : 'Document file');
+  }
+
+  async function handleTaskFilesChange(task: Task, files: FileList | null) {
+    const allFiles = Array.from(files || []);
+    const selectedFiles = allFiles.filter(isSupportedTaskFile);
+
+    if (!task.requireProof) {
+      setError('Assigned by did not require proof file/photo for this task.');
+      return;
+    }
+
+    if (!canToggleTaskStatus(task)) {
+      setError('You do not have permission to upload proof for this task.');
+      return;
+    }
+
+    if (allFiles.length && selectedFiles.length !== allFiles.length) {
+      setError('Only document and photo files are allowed.');
+    }
+
+    if (!selectedFiles.length) {
+      return;
+    }
+
+    setUploadingTaskId(task.id);
+    setError('');
+    setSuccessMessage('');
+    try {
+      const uploadedMedia = await Promise.all(selectedFiles.map((file) => readFileAsTaskMedia(file, me?.id)));
+      const nextMedia = [...(task.media || []), ...uploadedMedia];
+      await api<Task>(`/tasks/${task.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ media: nextMedia }),
+      });
+      setSuccessMessage('Proof file/photo uploaded.');
+      await loadData();
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : 'Unable to upload proof file/photo.');
+    } finally {
+      setUploadingTaskId(null);
+    }
+  }
+
   function handleSection(section: SectionKey) {
     setSidebarOpen(false);
     routeSection(router, section);
@@ -182,6 +259,10 @@ export default function ProjectViewPage() {
   }
 
   function openUpdateConfirm() {
+    if (!visibleProjectTasks.some((task) => canEditProject || canToggleTaskStatus(task))) {
+      setError('You do not have permission to update these tasks.');
+      return;
+    }
     setSuccessMessage('');
     setConfirmUpdateOpen(true);
   }
@@ -200,20 +281,30 @@ export default function ProjectViewPage() {
 
     const changedTasks = project.tasks.filter((task) => {
       const draft = getTaskDraft(task);
-      return (
-        draft.title.trim() !== task.title ||
-        draft.description !== (task.description || '') ||
-        draft.completed !== (task.status === 'COMPLETED')
-      );
+      if (canEditProject) {
+        return (
+          draft.title.trim() !== task.title ||
+          draft.description !== (task.description || '') ||
+          draft.completed !== (task.status === 'COMPLETED')
+        );
+      }
+
+      if (!canToggleTaskStatus(task)) {
+        return false;
+      }
+
+      return draft.completed !== (task.status === 'COMPLETED');
     });
 
-    if (!changedTasks.length) {
+    const permittedChangedTasks = changedTasks.filter((task) => canEditProject || canToggleTaskStatus(task));
+
+    if (!permittedChangedTasks.length) {
       setConfirmUpdateOpen(false);
       setError('No task changes to update.');
       return;
     }
 
-    const invalidTask = changedTasks.find((task) => !getTaskDraft(task).title.trim());
+    const invalidTask = permittedChangedTasks.find((task) => canEditProject && !getTaskDraft(task).title.trim());
     if (invalidTask) {
       setConfirmUpdateOpen(false);
       setError('Task title is required.');
@@ -225,15 +316,20 @@ export default function ProjectViewPage() {
     setSuccessMessage('');
     try {
       await Promise.all(
-        changedTasks.map((task) => {
+        permittedChangedTasks.map((task) => {
           const draft = getTaskDraft(task);
+          const body = canEditProject
+            ? {
+                title: draft.title.trim(),
+                description: draft.description.trim(),
+                status: draft.completed ? 'COMPLETED' : 'PENDING',
+              }
+            : {
+                status: draft.completed ? 'COMPLETED' : 'PENDING',
+              };
           return api(`/tasks/${task.id}`, {
             method: 'PATCH',
-            body: JSON.stringify({
-              title: draft.title.trim(),
-              description: draft.description.trim(),
-              status: draft.completed ? 'COMPLETED' : 'PENDING',
-            }),
+            body: JSON.stringify(body),
           });
         }),
       );
@@ -283,7 +379,7 @@ export default function ProjectViewPage() {
     <main className="min-h-screen bg-[#edf2f7] text-slate-900 lg:flex">
       <DashboardSidebar activeSection="projects" navItems={navItems} onClose={() => setSidebarOpen(false)} onSelect={handleSection} open={sidebarOpen} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <DashboardTopbar canRunReport={isAdmin} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} subtitle="Task Management System" title="Project View" />
+        <DashboardTopbar canRunReport={canRunReports(me?.roles ?? [])} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} subtitle="Task Management System" title="Project View" />
         <section className="px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
           {error ? <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
           {successMessage ? <div className="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{successMessage}</div> : null}
@@ -334,7 +430,7 @@ export default function ProjectViewPage() {
                   <button
                     type="button"
                     onClick={openUpdateConfirm}
-                    disabled={updatingTasks}
+                    disabled={updatingTasks || !canUpdateVisibleTasks}
                     className="inline-flex items-center gap-2 rounded-full border border-blue-600 bg-blue-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:border-blue-300 disabled:bg-blue-300"
                   >
                     {updatingTasks ? 'Updating...' : 'Update'}
@@ -344,6 +440,9 @@ export default function ProjectViewPage() {
               <div className="mt-5 space-y-4">
                 {visibleProjectTasks.length ? visibleProjectTasks.map((task) => {
                   const draft = getTaskDraft(task);
+                  const canToggleStatus = canEditProject || canToggleTaskStatus(task);
+                  const canUploadProof = Boolean(task.requireProof && canToggleStatus);
+                  const taskMedia = task.media || [];
                   return (
                     <div key={task.id} className="rounded-[24px] border border-slate-200 bg-white p-4">
                       <div className="grid gap-3 lg:grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-center">
@@ -352,35 +451,72 @@ export default function ProjectViewPage() {
                             type="checkbox"
                             className="h-4 w-4 rounded border-slate-300"
                             checked={draft.completed}
+                            disabled={!canToggleStatus}
                             onChange={() => updateTaskDraft(task.id, { completed: !draft.completed })}
                           />
                         </label>
                         <input
                           className="h-[56px] w-full rounded-[22px] border border-slate-200 bg-white px-6 text-base text-slate-900 outline-none"
+                          disabled={!canEditProject}
                           value={draft.title}
                           onChange={(event) => updateTaskDraft(task.id, { title: event.target.value })}
                           placeholder="Task title"
                         />
                         <input
                           className="h-[56px] w-full rounded-[22px] border border-slate-200 bg-white px-6 text-base text-slate-900 outline-none"
+                          disabled={!canEditProject}
                           value={draft.description}
                           onChange={(event) => updateTaskDraft(task.id, { description: event.target.value })}
                           placeholder="Task description"
                         />
-                        <button
-                          type="button"
-                          onClick={() => openRemoveConfirm(task)}
-                          disabled={!isAdmin}
-                          className={[
-                            'inline-flex h-[56px] items-center justify-center gap-2 rounded-[22px] border px-6 text-base font-medium transition',
-                            isAdmin
-                              ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100'
-                              : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400',
-                          ].join(' ')}
-                        >
-                          Remove
-                        </button>
+                        {canEditProject ? (
+                          <button
+                            type="button"
+                            onClick={() => openRemoveConfirm(task)}
+                            className="inline-flex h-[56px] items-center justify-center gap-2 rounded-[22px] border border-red-200 bg-red-50 px-6 text-base font-medium text-red-600 transition hover:bg-red-100"
+                          >
+                            Remove
+                          </button>
+                        ) : null}
                       </div>
+                      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                        <div>
+                          <input
+                            className={[
+                              'block h-[48px] w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition file:mr-3 file:h-8 file:rounded-xl file:border-0 file:bg-[#8fc740] file:px-3 file:text-sm file:font-semibold file:text-[#123b76] hover:file:bg-[#7fb337] focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5]',
+                              !canUploadProof ? 'cursor-not-allowed bg-slate-100 text-slate-400 opacity-60 file:bg-slate-200 file:text-slate-500 hover:file:bg-slate-200' : '',
+                            ].join(' ')}
+                            type="file"
+                            accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.rtf,.ppt,.pptx"
+                            multiple
+                            disabled={!canUploadProof || uploadingTaskId === task.id}
+                            onChange={(event) => {
+                              void handleTaskFilesChange(task, event.target.files);
+                              event.currentTarget.value = '';
+                            }}
+                          />
+                          <p className="mt-1 text-xs font-medium text-slate-500">
+                            {task.requireProof ? 'Proof file/photo required for this task.' : 'Proof file/photo not required for this task.'}
+                          </p>
+                        </div>
+                        <span className="rounded-full bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600">
+                          {uploadingTaskId === task.id ? 'Uploading...' : `${taskMedia.length} file${taskMedia.length === 1 ? '' : 's'}`}
+                        </span>
+                      </div>
+                      {taskMedia.length ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {taskMedia.map((media) => (
+                            <button
+                              key={media.id || media.url}
+                              type="button"
+                              onClick={() => setPreviewMedia(media)}
+                              className="max-w-full truncate rounded-full bg-[#f1f8e8] px-3 py-1 text-xs font-semibold text-[#42601c] transition hover:bg-[#dff1c5]"
+                            >
+                              Preview: {getTaskMediaLabel(media)}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   );
                 }) : <EmptyState message={isAdmin ? 'No tasks added to this project yet.' : 'No assigned tasks found for you in this project.'} />}
@@ -504,6 +640,39 @@ export default function ProjectViewPage() {
               >
                 {updatingTasks ? 'Submitting...' : 'Submit'}
               </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {previewMedia ? (
+        <div className="fixed inset-0 z-[230] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={`${getTaskMediaLabel(previewMedia)} preview`}>
+          <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-[0_30px_80px_rgba(15,23,42,0.28)]">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 sm:px-5">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-bold text-slate-950">{getTaskMediaLabel(previewMedia)}</p>
+                <p className="text-xs font-medium text-slate-500">{previewMedia.type === 'PHOTO' ? 'Photo preview' : 'Document preview'}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewMedia(null)}
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                aria-label="Close preview"
+              >
+                x
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 bg-slate-100 p-3 sm:p-4">
+              {previewMedia.type === 'PHOTO' ? (
+                <div className="flex max-h-[72vh] min-h-[320px] items-center justify-center overflow-auto rounded-2xl bg-white">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img alt={getTaskMediaLabel(previewMedia)} className="max-h-[72vh] max-w-full object-contain" src={previewMedia.url} />
+                </div>
+              ) : (
+                <div className="h-[72vh] overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                  <iframe className="h-full w-full" src={previewMedia.url} title={getTaskMediaLabel(previewMedia)} />
+                </div>
+              )}
             </div>
           </div>
         </div>

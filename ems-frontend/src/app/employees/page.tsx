@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { api, getToken } from '../lib/api';
 import { clearAuth } from '../lib/auth';
 import { getWorkspaceNavItems, routeSection } from '../lib/workspace';
-import { canManageTeamRecords, canViewerSeeEmployee, formatRoleName, getEmployeeScopeIds, getHighestRolePower, isAdminRole } from '../lib/hierarchy';
+import { canManageTeamRecords, canRunReports, canViewerSeeEmployee, formatRoleName, getEmployeeScopeIds, getHighestRolePower, isAdminRole } from '../lib/hierarchy';
 import { DashboardSidebar, DashboardTopbar } from '../../components/DashboardShell';
 import { PaginationBar } from '../../components/PaginationBar';
 import type { DashboardResponse, Employee, NavItem, PaginatedResponse, SectionKey } from '../dashboard/types';
@@ -35,6 +35,18 @@ function EditIcon({ className = 'h-4 w-4' }: { className?: string }) {
       />
     </svg>
   );
+}
+
+function canEditEmployeeRecord(viewer: Employee | undefined, employee: Employee) {
+  if (!viewer) {
+    return false;
+  }
+
+  if (viewer.roles.includes('SA1')) {
+    return true;
+  }
+
+  return viewer.roles.includes('SA2') && !employee.roles.includes('SA1');
 }
 
 function formatRoleLabel(role: string) {
@@ -136,7 +148,9 @@ export default function EmployeesPage() {
 
   const me = dashboard?.employee;
   const isAdmin = isAdminRole(me?.roles ?? []);
+  const canDeleteRecords = Boolean(me?.roles.includes('SA1'));
   const canManage = canManageTeamRecords(me?.roles ?? []);
+  const canCreateEmployee = Boolean(me?.roles.includes('SA1') || me?.roles.includes('SA2'));
   const initials = me?.name?.trim()?.charAt(0)?.toUpperCase() || 'A';
   const navItems: NavItem[] = getWorkspaceNavItems(canManage, isAdmin, me?.roles ?? []);
   const selectedPerson = useMemo(() => employees.find((employee) => employee.id === selectedPersonId) || null, [employees, selectedPersonId]);
@@ -263,7 +277,7 @@ export default function EmployeesPage() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <DashboardTopbar
-          canRunReport={isAdmin}
+          canRunReport={canRunReports(me?.roles ?? [])}
           initials={initials}
           userEmail={me?.email ?? ''}
           userName={me?.name ?? 'Admin'}
@@ -271,7 +285,7 @@ export default function EmployeesPage() {
           onMenuOpen={() => setSidebarOpen(true)}
           onRunReport={handleRunReport}
           peopleFilter={sidebarPeopleFilter}
-          peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'}
+          // peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'}
           selectedPersonId={selectedPersonId}
           onSelectPerson={handlePersonScopeChange}
           subtitle="Task Management System"
@@ -286,9 +300,9 @@ export default function EmployeesPage() {
           ) : null}
 
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] sm:p-6 lg:p-7">
-            {!canManage ? (
+            {!canCreateEmployee ? (
               <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                You can view employees, but only ADMIN or LEADER can create or edit employees.
+                You can view employees, but only SA1 or SA2 can create employees. Employee edit is limited by role.
               </div>
             ) : null}
 
@@ -315,10 +329,10 @@ export default function EmployeesPage() {
                   href="/employees/new"
                   className={[
                     'inline-flex items-center gap-2 rounded-full px-5 py-1 text-sm font-medium transition',
-                    canManage ? 'bg-blue-600 text-white' : 'pointer-events-none bg-slate-200 text-slate-400',
+                    canCreateEmployee ? 'bg-blue-600 text-white' : 'pointer-events-none bg-slate-200 text-slate-400',
                   ].join(' ')}
-                  aria-disabled={!canManage}
-                  tabIndex={canManage ? 0 : -1}
+                  aria-disabled={!canCreateEmployee}
+                  tabIndex={canCreateEmployee ? 0 : -1}
                 >
                   <PlusIcon className="h-4 w-4" />
                   Create Employee
@@ -362,14 +376,17 @@ export default function EmployeesPage() {
                           <td className="px-6 py-5 text-right">
                             <div className="inline-flex items-center gap-2">
                               <div className="inline-flex">
+                                {(() => {
+                                  const canEditEmployee = canEditEmployeeRecord(me, employee);
+                                  return (
                                 <button
                                   className={[
                                     'inline-flex h-8 items-center gap-1.5 rounded-l-xl px-4 text-xs font-semibold uppercase tracking-[0.14em] transition',
-                                    canManage ? 'bg-blue-600 text-white hover:bg-blue-700' : 'cursor-not-allowed bg-slate-200 text-slate-400',
+                                    canEditEmployee ? 'bg-blue-600 text-white hover:bg-blue-700' : 'cursor-not-allowed bg-slate-200 text-slate-400',
                                   ].join(' ')}
-                                  disabled={!canManage}
+                                  disabled={!canEditEmployee}
                                   onClick={() => {
-                                    if (!canManage) return;
+                                    if (!canEditEmployee) return;
                                     router.push(`/employees/${employee.id}/edit`);
                                   }}
                                   type="button"
@@ -377,15 +394,15 @@ export default function EmployeesPage() {
                                   <EditIcon className="h-6 w-4" />
                                   Edit
                                 </button>
+                                  );
+                                })()}
                                 <button
                                   aria-label="Open employee actions"
                                   className={[
                                     'inline-flex h-8 items-center rounded-r-xl px-3 transition',
-                                    canManage ? 'border-l border-blue-500 bg-blue-600 text-white hover:bg-blue-700' : 'cursor-not-allowed border-l border-slate-300 bg-slate-200 text-slate-400',
+                                    'border-l border-blue-500 bg-blue-600 text-white hover:bg-blue-700',
                                   ].join(' ')}
-                                  disabled={!canManage}
                                   onClick={(event) => {
-                                    if (!canManage) return;
                                     handleActionMenuToggle(employee.id, event);
                                   }}
                                   type="button"
@@ -450,7 +467,7 @@ export default function EmployeesPage() {
                   <EyeIcon className="h-4 w-4" />
                   View
                 </button>
-                {isAdmin ? (
+                {canDeleteRecords ? (
                   <button
                     className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm font-medium text-red-600 transition hover:bg-red-50"
                     onClick={() => void softDeleteEmployee(employee)}

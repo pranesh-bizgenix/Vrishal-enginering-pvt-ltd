@@ -201,7 +201,7 @@ export function DashboardTopbar({
   onMenuOpen,
   onRunReport,
   peopleFilter = [],
-  peopleFilterTitle = 'People',
+  // peopleFilterTitle = 'People',
   selectedPersonId = '',
   onSelectPerson,
 }: DashboardTopbarProps) {
@@ -216,7 +216,7 @@ export function DashboardTopbar({
   const effectivePeopleFilter = hasPagePeopleFilter ? peopleFilter : fallbackPeopleFilter;
   const effectiveSelectedPersonId = hasPagePeopleFilter ? selectedPersonId : fallbackSelectedPersonId;
   const effectiveSelectedPerson = effectivePeopleFilter.find((person) => person.id === effectiveSelectedPersonId) || null;
-  const effectivePeopleFilterTitle = effectiveSelectedPerson ? `Viewing: ${effectiveSelectedPerson.name}` : onSelectPerson ? peopleFilterTitle : 'Leaders & Employees';
+  // const effectivePeopleFilterTitle = effectiveSelectedPerson ? `Viewing: ${effectiveSelectedPerson.name}` : onSelectPerson ? peopleFilterTitle : 'Leaders & Employees';
   const effectiveOnSelectPerson = useMemo(() => {
     if (onSelectPerson) {
       return onSelectPerson;
@@ -327,7 +327,7 @@ export function DashboardTopbar({
         </div>
 
         <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:gap-3 md:ml-auto md:w-auto">
-          {showPeopleFilter ? (
+          {/* {showPeopleFilter ? (
             <div className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm sm:flex-none sm:rounded-full">
               <span className="hidden max-w-[180px] truncate text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500 xl:inline">
                 {effectivePeopleFilterTitle}
@@ -344,7 +344,7 @@ export function DashboardTopbar({
                   </option>
                 ))}
               </select>
-              {/* {effectiveSelectedPersonId ? (
+              {effectiveSelectedPersonId ? (
                 <button
                   className="rounded-full bg-white/10 px-3 py-2 text-xs font-semibold text-white transition hover:bg-white/15"
                   onClick={() => effectiveOnSelectPerson?.('')}
@@ -352,9 +352,9 @@ export function DashboardTopbar({
                 >
                   Clear
                 </button>
-              ) : null} */}
+              ) : null}
             </div>
-          ) : null}
+          ) : null} */}
           {canRunReport ? (
             <button
               className="shrink-0 rounded-full bg-[#8fc740] px-4 py-2.5 text-sm font-bold text-[#010048] shadow-[0_14px_28px_rgba(143,199,64,0.2)] transition hover:-translate-y-0.5 hover:bg-[#9ed052] sm:px-5"

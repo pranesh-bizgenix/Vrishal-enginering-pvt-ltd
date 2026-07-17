@@ -35,6 +35,7 @@ export type TaskMedia = {
   url: string;
   label?: string;
   mimeType?: string;
+  createdById?: string | null;
 };
 export type Task = {
   id: string;
@@ -47,8 +48,12 @@ export type Task = {
   projectName: string;
   assignedEmployeeIds: string[];
   assignedEmployees: Employee[];
+  createdByEmployeeId?: string | null;
   createdAt?: string | null;
   dueDate: string | null;
+  requireProof?: boolean;
+  qualityRating?: 'GOOD' | 'GREAT' | 'OUTSTANDING' | 'LMB' | null;
+  ncItems?: string[];
   notes: TaskNote[];
   media?: TaskMedia[];
 };

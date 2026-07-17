@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { api, getToken } from '../../lib/api';
 import { clearAuth } from '../../lib/auth';
 import { getWorkspaceNavItems, routeSection } from '../../lib/workspace';
-import { canManageTeamRecords, formatRoleName, isAdminRole } from '../../lib/hierarchy';
+import { canManageTeamRecords, canRunReports, formatRoleName, isAdminRole } from '../../lib/hierarchy';
 import { DashboardSidebar, DashboardTopbar } from '../../../components/DashboardShell';
 import type { DashboardResponse, Employee, NavItem, Project, SectionKey, Task } from '../../dashboard/types';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
@@ -20,6 +20,10 @@ function formatLabel(value: string) {
 
 function formatDate(value: string | null) {
   return value ? new Date(value).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'Not set';
+}
+
+function isTaskApproved(task: Task) {
+  return task.notes.some((note) => note.message.trim().toLowerCase().startsWith('approved by'));
 }
 
 export default function EmployeeViewPage() {
@@ -93,8 +97,8 @@ export default function EmployeeViewPage() {
     return tasks.filter((task) => task.assignedEmployeeIds.includes(employee.id));
   }, [employee, tasks]);
 
-  const pendingTasks = useMemo(() => employeeTasks.filter((task) => task.status !== 'COMPLETED'), [employeeTasks]);
-  const completedTasks = useMemo(() => employeeTasks.filter((task) => task.status === 'COMPLETED'), [employeeTasks]);
+  const pendingTasks = useMemo(() => employeeTasks.filter((task) => !isTaskApproved(task)), [employeeTasks]);
+  const completedTasks = useMemo(() => employeeTasks.filter((task) => isTaskApproved(task)), [employeeTasks]);
 
   function handleSection(section: SectionKey) {
     setSidebarOpen(false);
@@ -118,7 +122,7 @@ export default function EmployeeViewPage() {
     <main className="min-h-screen bg-[#edf2f7] text-slate-900 lg:flex">
       <DashboardSidebar activeSection="employees" navItems={navItems} onClose={() => setSidebarOpen(false)} onSelect={handleSection} open={sidebarOpen} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <DashboardTopbar canRunReport={isAdmin} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} subtitle="Task Management System" title="Employee View" />
+        <DashboardTopbar canRunReport={canRunReports(me?.roles ?? [])} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} subtitle="Task Management System" title="Employee View" />
         <section className="px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
           {error ? <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] sm:p-6 lg:p-7">

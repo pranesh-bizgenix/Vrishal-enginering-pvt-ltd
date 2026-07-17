@@ -17,6 +17,7 @@ type TaskMediaPayload = {
   url: string;
   label?: string;
   mimeType?: string;
+  createdById?: string | null;
 };
 
 @Controller('tasks')
@@ -72,6 +73,9 @@ export class TaskController {
       dueDate?: string | null;
       assignedEmployeeIds?: string[];
       media?: TaskMediaPayload[];
+      requireProof?: boolean;
+      qualityRating?: string | null;
+      ncItems?: string[];
     },
   ) {
     return this.taskService.createTask(authorization, body);
@@ -91,6 +95,9 @@ export class TaskController {
       dueDate?: string | null;
       assignedEmployeeIds?: string[];
       media?: TaskMediaPayload[];
+      requireProof?: boolean;
+      qualityRating?: string | null;
+      ncItems?: string[];
     },
   ) {
     return this.taskService.updateTask(authorization, taskId, body);
@@ -103,6 +110,23 @@ export class TaskController {
     @Body() body: { status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' },
   ) {
     return this.taskService.updateTaskStatus(authorization, taskId, body);
+  }
+
+  @Post(':taskId/notes')
+  addTaskNote(
+    @Headers('authorization') authorization: string | undefined,
+    @Param('taskId') taskId: string,
+    @Body() body: { message: string; markDone?: boolean },
+  ) {
+    return this.taskService.addTaskNote(authorization, taskId, body);
+  }
+
+  @Post(':taskId/approve')
+  approveTask(
+    @Headers('authorization') authorization: string | undefined,
+    @Param('taskId') taskId: string,
+  ) {
+    return this.taskService.approveTask(authorization, taskId);
   }
 
   @Delete(':taskId')

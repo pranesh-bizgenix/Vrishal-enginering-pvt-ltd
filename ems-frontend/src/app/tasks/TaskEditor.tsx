@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { api, getToken, TaskType } from '../lib/api';
 import { clearAuth } from '../lib/auth';
 import { getWorkspaceNavItems, routeSection } from '../lib/workspace';
-import { canManageTeamRecords, getAssignableEmployeesForViewer, isAdminRole } from '../lib/hierarchy';
+import { canManageTeamRecords, canRunReports, getTaskAssignableEmployees, isAdminRole } from '../lib/hierarchy';
 import { DashboardSidebar, DashboardTopbar } from '../../components/DashboardShell';
 import type { DashboardResponse, Employee, NavItem, Project, SectionKey, Task, TaskMedia } from '../dashboard/types';
 import { ChevronDownIcon, ChevronUpIcon, DocumentIcon, EyeIcon, PhotoIcon, PlusIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline';
@@ -20,9 +20,13 @@ type TaskItemDraft = {
   id: string;
   title: string;
   description: string;
+  dueDate: string;
+  requireProof: boolean;
+  qualityRating: Task['qualityRating'] | '';
+  ncItems: string[];
 };
 
-const fieldClassName = 'w-full rounded-2xl border border-emerald-100 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5]';
+const fieldClassName = 'w-full rounded-2xl border border-emerald-100 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400';
 const primaryButtonClassName = 'inline-flex items-center justify-center rounded-2xl bg-[#8fc740] px-5 py-3 text-sm font-bold text-[#123b76] shadow-[0_14px_28px_rgba(143,199,64,0.24)] transition hover:bg-[#7fb337] hover:shadow-[0_16px_32px_rgba(143,199,64,0.3)] disabled:cursor-not-allowed disabled:opacity-60';
 const secondaryButtonClassName = 'inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-6 py-3 text-sm font-bold text-slate-700 shadow-sm transition hover:border-[#8fc740] hover:bg-[#f6fbef] hover:text-[#123b76]';
 const taskFormInitial = {
@@ -30,6 +34,7 @@ const taskFormInitial = {
   dueDate: '',
   type: 'SIMPLE' as TaskType,
   status: 'PENDING' as Task['status'],
+  requireProof: false,
   assignedEmployeeIds: [] as string[],
 };
 
@@ -37,11 +42,11 @@ const taskItemInitial = (): TaskItemDraft => ({
   id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
   title: '',
   description: '',
+  dueDate: '',
+  requireProof: false,
+  qualityRating: '',
+  ncItems: [],
 });
-
-function EmptyState({ message }: { message: string }) {
-  return <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">{message}</div>;
-}
 
 function formatTaskStatusLabel(status: Task['status']) {
   if (status === 'IN_PROGRESS') {
@@ -85,6 +90,26 @@ function getTaskMediaLabel(media: TaskMedia) {
   return media.label || (media.type === 'DOCUMENT' ? 'Document file' : 'Photo file');
 }
 
+function formatNoteDate(value: string) {
+  return new Date(value).toLocaleString('en-IN', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Kolkata',
+  });
+}
+
+const TASK_DESCRIPTION_NOTE_PREFIX = 'TASK_DESCRIPTION -';
+
+function isTaskDescriptionNote(message: string) {
+  return message.trim().startsWith(TASK_DESCRIPTION_NOTE_PREFIX);
+}
+
+function getTaskDescriptionNoteText(message: string) {
+  return isTaskDescriptionNote(message)
+    ? message.trim().slice(TASK_DESCRIPTION_NOTE_PREFIX.length).trim()
+    : message;
+}
+
 export function TaskEditor({ mode, taskId }: TaskEditorProps) {
   const router = useRouter();
   const employeesDropdownRef = useRef<HTMLDivElement | null>(null);
@@ -100,6 +125,11 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
   const [employeesOpen, setEmployeesOpen] = useState(false);
   const [error, setError] = useState('');
   const [previewMedia, setPreviewMedia] = useState<TaskMedia | null>(null);
+  const [currentTask, setCurrentTask] = useState<Task | null>(null);
+  const [noteMessage, setNoteMessage] = useState('');
+  const [sendingNote, setSendingNote] = useState(false);
+  const [permissionPopupOpen, setPermissionPopupOpen] = useState(false);
+  const accessToastShownRef = useRef(false);
 
   const loadData = useCallback(async () => {
     setBusy(true);
@@ -120,11 +150,13 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
       setProjects(projectData);
 
       if (mode === 'edit' && taskData) {
+        setCurrentTask(taskData);
         setTaskForm({
           projectId: taskData.projectId,
           dueDate: taskData.dueDate ? taskData.dueDate.slice(0, 16) : '',
           type: taskData.type,
           status: taskData.status,
+          requireProof: Boolean(taskData.requireProof),
           assignedEmployeeIds: taskData.assignedEmployeeIds.filter((employeeId) => employeeData.some((employee) => employee.id === employeeId)),
         });
         setTaskItems([
@@ -132,10 +164,15 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
             id: taskData.id,
             title: taskData.title,
             description: taskData.description,
+            dueDate: '',
+            requireProof: Boolean(taskData.requireProof),
+            qualityRating: taskData.qualityRating || '',
+            ncItems: taskData.ncItems?.length ? taskData.ncItems : [],
           },
         ]);
         setTaskMediaByItemId({ [taskData.id]: taskData.media || [] });
       } else {
+        setCurrentTask(null);
         const initialTaskItem = taskItemInitial();
         const initialAssignedEmployeeIds =
           canManageTeamRecords(dashboardData.employee.roles)
@@ -203,14 +240,32 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
 
   const me = dashboard?.employee;
   const isAdmin = isAdminRole(me?.roles ?? []);
+  const isSuperAdmin = Boolean(me?.roles.includes('SA1') || me?.roles.includes('SA2'));
+  const canDeleteRecords = Boolean(me?.roles.includes('SA1'));
   const canManage = canManageTeamRecords(me?.roles ?? []);
-  const canEditCurrentTask = canManage || Boolean(me && taskForm.assignedEmployeeIds.includes(me.id));
+  const isAssignedToMe = Boolean(me && taskForm.assignedEmployeeIds.includes(me.id));
+  const isAssignedByMe = Boolean(me && currentTask?.createdByEmployeeId === me.id);
+  const canEditCurrentTask =
+    isSuperAdmin ||
+    isAssignedToMe ||
+    isAssignedByMe;
   const canUseTaskEditor = mode === 'create' ? Boolean(me) : canEditCurrentTask;
+  const canEditTaskDetails =
+    mode === 'create' ||
+    Boolean(
+      me &&
+        (isSuperAdmin ||
+          currentTask?.createdByEmployeeId === me.id ||
+          (!currentTask?.createdByEmployeeId && canManage)),
+    );
+  const canChangeTaskStatus =
+    canEditTaskDetails ||
+    (mode === 'edit' && isAssignedToMe && currentTask?.status !== 'COMPLETED');
   const navItems = useMemo<NavItem[]>(() => getWorkspaceNavItems(canManage, isAdmin, me?.roles ?? []), [canManage, isAdmin, me?.roles]);
   const initials = me?.name?.trim()?.charAt(0)?.toUpperCase() || 'A';
   const selectableEmployees = useMemo(
-    () => getAssignableEmployeesForViewer(employees, me, taskForm.assignedEmployeeIds),
-    [employees, me, taskForm.assignedEmployeeIds],
+    () => getTaskAssignableEmployees(employees, taskForm.assignedEmployeeIds),
+    [employees, taskForm.assignedEmployeeIds],
   );
   const selectedEmployeesLabel = taskForm.assignedEmployeeIds.length
     ? employees
@@ -218,6 +273,37 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
         .map((employee) => employee.name)
         .join(', ')
     : 'Select employees';
+  const assignedByName =
+    employees.find((employee) => employee.id === currentTask?.createdByEmployeeId)?.name ||
+    currentTask?.notes.find((note) => note.message.toLowerCase().includes('created this task'))?.createdByName ||
+    'Not available';
+  const taskDescriptionNotes = useMemo(
+    () => (currentTask?.notes || []).filter((note) => isTaskDescriptionNote(note.message)),
+    [currentTask?.notes],
+  );
+  const taskSubmittedDone = Boolean(currentTask?.notes.some((note) => note.markDone));
+  const canEditCompletedTaskDetails = Boolean(me?.roles.includes('SA1'));
+  const completedTaskLocked = mode === 'edit' && currentTask?.status === 'COMPLETED' && !canEditCompletedTaskDetails;
+  const taskDetailsLocked = mode === 'edit' && (!canEditTaskDetails || completedTaskLocked);
+  const canAddTaskDescriptionDiscussion = mode === 'edit' && Boolean(currentTask) && (isSuperAdmin || isAssignedToMe || isAssignedByMe);
+  const assignedProofRequired = mode === 'edit' && Boolean(currentTask?.requireProof) && (isAssignedToMe || taskDetailsLocked);
+  const isAssignedSubmitOnly =
+    mode === 'edit' &&
+    isAssignedToMe &&
+    !canEditTaskDetails &&
+    currentTask?.status !== 'COMPLETED' &&
+    !taskSubmittedDone;
+  const shouldShowPermissionPopup = permissionPopupOpen;
+
+  useEffect(() => {
+    if (!dashboard || canUseTaskEditor || accessToastShownRef.current) {
+      return;
+    }
+
+    accessToastShownRef.current = true;
+    setPermissionPopupOpen(true);
+    dispatchToast('warning', mode === 'create' ? 'Please log in to create tasks.' : 'You can edit only tasks assigned to you.');
+  }, [canUseTaskEditor, dashboard, mode]);
 
   function handleSection(section: SectionKey) {
     setSidebarOpen(false);
@@ -237,12 +323,50 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
     }
   }
 
+  function showPermissionPopupForLockedTask() {
+    if (!taskDetailsLocked) {
+      return false;
+    }
+
+    setEmployeesOpen(false);
+    setPermissionPopupOpen(true);
+    return true;
+  }
+
   function toggleSelection(list: string[], id: string) {
     return list.includes(id) ? list.filter((item) => item !== id) : [...list, id];
   }
 
-  function updateTaskItem(itemId: string, field: 'title' | 'description', value: string) {
+  function updateTaskItem(itemId: string, field: 'title' | 'description' | 'dueDate' | 'qualityRating', value: string) {
     setTaskItems((current) => current.map((item) => (item.id === itemId ? { ...item, [field]: value } : item)));
+  }
+
+  function updateTaskItemProofRequired(itemId: string, requireProof: boolean) {
+    setTaskItems((current) => current.map((item) => (item.id === itemId ? { ...item, requireProof } : item)));
+  }
+
+  function addNcItem(itemId: string) {
+    setTaskItems((current) => current.map((item) => (item.id === itemId ? { ...item, ncItems: [...item.ncItems, ''] } : item)));
+  }
+
+  function updateNcItem(itemId: string, ncIndex: number, value: string) {
+    setTaskItems((current) =>
+      current.map((item) =>
+        item.id === itemId
+          ? { ...item, ncItems: item.ncItems.map((nc, index) => (index === ncIndex ? value : nc)) }
+          : item,
+      ),
+    );
+  }
+
+  function removeNcItem(itemId: string, ncIndex: number) {
+    setTaskItems((current) =>
+      current.map((item) =>
+        item.id === itemId
+          ? { ...item, ncItems: item.ncItems.filter((_, index) => index !== ncIndex) }
+          : item,
+      ),
+    );
   }
 
   function addTaskItem() {
@@ -256,7 +380,7 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
       return false;
     }
 
-    const existingTaskRowLocked = mode === 'edit' && taskItems[0]?.id === itemId && !isAdmin;
+    const existingTaskRowLocked = mode === 'edit' && taskItems[0]?.id === itemId && !canEditTaskDetails;
     return !existingTaskRowLocked;
   }
 
@@ -284,11 +408,28 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
       return;
     }
 
-    const media = await Promise.all(selectedFiles.map(readFileAsTaskMedia));
+    const media = (await Promise.all(selectedFiles.map(readFileAsTaskMedia))).map((item) => ({
+      ...item,
+      createdById: me?.id || null,
+    }));
+    const nextMedia = [...(taskMediaByItemId[itemId] || []), ...media];
     setTaskMediaByItemId((current) => ({
       ...current,
-      [itemId]: [...(current[itemId] || []), ...media],
+      [itemId]: nextMedia,
     }));
+
+    if (taskDetailsLocked && assignedProofRequired && taskId) {
+      try {
+        const updatedTask = await api<Task>(`/tasks/${taskId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ media: nextMedia }),
+        });
+        setCurrentTask(updatedTask);
+        setTaskMediaByItemId({ [updatedTask.id]: updatedTask.media || [] });
+      } catch (uploadError) {
+        setError(uploadError instanceof Error ? uploadError.message : 'Unable to upload proof file/photo.');
+      }
+    }
   }
 
   function removeTaskMedia(itemId: string, mediaId: string) {
@@ -296,6 +437,32 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
       ...current,
       [itemId]: (current[itemId] || []).filter((media) => (media.id || media.url) !== mediaId),
     }));
+  }
+
+  function canRemoveTaskMedia(_media: TaskMedia) {
+    return canDeleteRecords;
+  }
+
+  async function submitTaskNote() {
+    const message = noteMessage.trim();
+    if (!taskId || !message || !canAddTaskDescriptionDiscussion) {
+      return;
+    }
+
+    setSendingNote(true);
+    setError('');
+    try {
+      const updatedTask = await api<Task>(`/tasks/${taskId}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({ message: `${TASK_DESCRIPTION_NOTE_PREFIX} ${message}` }),
+      });
+      setCurrentTask(updatedTask);
+      setNoteMessage('');
+    } catch (submissionError) {
+      setError(submissionError instanceof Error ? submissionError.message : 'Unable to add description.');
+    } finally {
+      setSendingNote(false);
+    }
   }
 
 
@@ -309,18 +476,89 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
         dispatchToast('warning', 'Add at least one task title before saving.');
         throw new Error('Add at least one task title before saving.');
       }
+      if (!isAssignedSubmitOnly) {
+        if (!taskForm.assignedEmployeeIds.length) {
+          dispatchToast('warning', 'Assign at least one employee before saving.');
+          throw new Error('Assign at least one employee before saving.');
+        }
+        const missingDueDate = validTaskItems.some((item) => !(item.dueDate || taskForm.dueDate));
+        if (missingDueDate) {
+          dispatchToast('warning', 'Due date is required for every task.');
+          throw new Error('Due date is required for every task.');
+        }
+      }
 
       if (mode === 'edit' && taskId) {
         const editItem = validTaskItems[0];
+        if (isAssignedSubmitOnly) {
+          const proofMedia = taskMediaByItemId[editItem.id] || [];
+          if (assignedProofRequired && !proofMedia.length) {
+            dispatchToast('warning', 'Upload at least one proof file or photo before submitting.');
+            throw new Error('Upload at least one proof file or photo before submitting.');
+          }
+
+          if (proofMedia.length) {
+            await api(`/tasks/${taskId}`, {
+              method: 'PATCH',
+              body: JSON.stringify({ media: proofMedia }),
+            });
+          }
+          await api(`/tasks/${taskId}/notes`, {
+            method: 'POST',
+            body: JSON.stringify({
+              message: assignedProofRequired
+                ? `${me?.name || 'Assigned user'} submitted work for approval with proof attachment.`
+                : `${me?.name || 'Assigned user'} submitted work for approval.`,
+              markDone: true,
+            }),
+          });
+          router.push('/tasks');
+          return;
+        }
+        if (taskDetailsLocked && canChangeTaskStatus) {
+          if (isAssignedToMe && !canEditTaskDetails && taskForm.status === 'COMPLETED') {
+            const proofMedia = taskMediaByItemId[editItem.id] || [];
+            if (assignedProofRequired && !proofMedia.length) {
+              dispatchToast('warning', 'Upload at least one proof file or photo before submitting.');
+              throw new Error('Upload at least one proof file or photo before submitting.');
+            }
+            if (proofMedia.length) {
+              await api(`/tasks/${taskId}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ media: proofMedia }),
+              });
+            }
+            await api(`/tasks/${taskId}/notes`, {
+              method: 'POST',
+              body: JSON.stringify({
+                message: assignedProofRequired
+                  ? `${me?.name || 'Assigned user'} submitted work for approval with proof attachment.`
+                  : `${me?.name || 'Assigned user'} submitted work for approval.`,
+                markDone: true,
+              }),
+            });
+            router.push('/tasks');
+            return;
+          }
+          await api(`/tasks/${taskId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status: taskForm.status }),
+          });
+          router.push('/tasks');
+          return;
+        }
         const payload = {
           title: editItem?.title || '',
           description: editItem?.description || '',
           projectId: taskForm.projectId,
-          dueDate: taskForm.dueDate || null,
+          dueDate: editItem?.dueDate || taskForm.dueDate || null,
           type: taskForm.type,
           status: taskForm.status,
           assignedEmployeeIds: taskForm.assignedEmployeeIds,
           media: taskMediaByItemId[editItem.id] || [],
+          requireProof: editItem.requireProof,
+          qualityRating: editItem?.qualityRating || null,
+          ncItems: editItem?.ncItems.filter((item) => item.trim()) || [],
         };
         await api(`/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify(payload) });
 
@@ -334,11 +572,14 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
                   title: item.title,
                   description: item.description,
                   projectId: taskForm.projectId,
-                  dueDate: taskForm.dueDate || null,
+                  dueDate: item.dueDate || taskForm.dueDate || null,
                   type: taskForm.type,
                   status: taskForm.status,
                   assignedEmployeeIds: taskForm.assignedEmployeeIds,
                   media: taskMediaByItemId[item.id] || [],
+                  requireProof: item.requireProof,
+                  qualityRating: item.qualityRating || null,
+                  ncItems: item.ncItems.filter((nc) => nc.trim()),
                 }),
               }),
             ),
@@ -353,11 +594,14 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
                 title: item.title,
                 description: item.description,
                 projectId: taskForm.projectId,
-                dueDate: taskForm.dueDate || null,
+                dueDate: item.dueDate || taskForm.dueDate || null,
                 type: taskForm.type,
                 status: taskForm.status,
                 assignedEmployeeIds: taskForm.assignedEmployeeIds,
                 media: taskMediaByItemId[item.id] || [],
+                requireProof: item.requireProof,
+                qualityRating: item.qualityRating || null,
+                ncItems: item.ncItems.filter((nc) => nc.trim()),
               }),
             }),
           ),
@@ -371,19 +615,27 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
     }
   }
 
-  if (!dashboard) {
-    return <main className="flex min-h-screen items-center justify-center bg-[#edf2f7] px-6 py-10"><div className="rounded-3xl border border-slate-200 bg-white px-6 py-5 text-sm text-slate-500 shadow-sm">{busy ? 'Loading task form...' : error || 'Preparing task page...'}</div></main>;
-  }
-
-  if (!canUseTaskEditor) {
-    return <main className="flex min-h-screen items-center justify-center bg-[#edf2f7] px-6 py-10"><EmptyState message={mode === 'create' ? 'Please log in to create tasks.' : 'You can edit only tasks assigned to you.'} /></main>;
-  }
-
   return (
     <main className="min-h-screen bg-[#f4f9ec] text-slate-900 lg:flex">
+      {shouldShowPermissionPopup ? (
+        <>
+          <div className="fixed inset-0 z-[9998] bg-slate-950/20" />
+          <div className="fixed left-1/2 top-1/2 z-[9999] w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-amber-200 bg-white px-5 py-5 text-center shadow-[0_18px_45px_rgba(15,23,42,0.18)]">
+            <p className="text-base font-bold text-amber-800">No permission</p>
+            <p className="mt-2 text-sm text-slate-600">You do not have permission to edit this task.</p>
+            <button
+              type="button"
+              onClick={() => setPermissionPopupOpen(false)}
+              className="mt-4 inline-flex h-10 items-center justify-center rounded-xl bg-[#8fc740] px-5 text-sm font-bold text-[#123b76] shadow-sm transition hover:bg-[#7fb337]"
+            >
+              Close
+            </button>
+          </div>
+        </>
+      ) : null}
       <DashboardSidebar activeSection="tasks" navItems={navItems} onClose={() => setSidebarOpen(false)} onSelect={handleSection} open={sidebarOpen} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <DashboardTopbar canRunReport={isAdmin} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} subtitle="Task Management System" title={mode === 'edit' ? 'Edit Task' : 'Create Task'} />
+        <DashboardTopbar canRunReport={canRunReports(me?.roles ?? [])} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} subtitle="Task Management System" title={mode === 'edit' ? 'Edit Task' : 'Create Task'} />
         <section className="px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
           {error ? <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
           <section className="rounded-[28px] border border-[#d8ecbb] bg-white p-5 shadow-[0_22px_55px_rgba(72,116,28,0.09)] sm:p-6 lg:p-7">
@@ -392,11 +644,11 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
                 <div>
                   <p className="text-sm font-bold uppercase tracking-[0.28em] text-[#6f9e2c]">Task Module</p>
                   <h1 className="mt-2 text-xl font-semibold text-slate-950 sm:text-2xl">{mode === 'edit' ? 'Update Task' : 'Create Task'}</h1>
-                  <p className="mt-1 text-sm text-slate-500">Assign a task, manage owners, track status, and keep note history.</p>
+                  <p className="mt-1 text-sm text-slate-500">{isAssignedSubmitOnly ? 'Review the assigned task, upload proof, then submit done for approval.' : 'Assign a task, manage owners, track status, and keep note history.'}</p>
                 </div>
                 <div className="flex flex-wrap gap-3">
                   <button className={secondaryButtonClassName} onClick={() => router.push('/tasks')} type="button">Cancel</button>
-                  <button className={primaryButtonClassName} disabled={saving} type="submit">{saving ? 'Saving...' : mode === 'edit' ? 'Update Task' : 'Create Task'}</button>
+                  <button className={primaryButtonClassName} disabled={saving || (taskDetailsLocked && !isAssignedSubmitOnly && !canChangeTaskStatus)} type="submit">{saving ? 'Saving...' : isAssignedSubmitOnly ? 'Submit Done' : mode === 'edit' ? 'Update Task' : 'Create Task'}</button>
                 </div>
               </div>
 
@@ -404,8 +656,9 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-slate-700">Project</label>
                   <select
-                    className="h-11 w-full rounded-xl border border-emerald-100 bg-white px-4 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5]"
+                    className="h-11 w-full rounded-xl border border-emerald-100 bg-white px-4 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
                     onChange={(event) => setTaskForm({ ...taskForm, projectId: event.target.value })}
+                    disabled={taskDetailsLocked}
                     value={taskForm.projectId}
                   >
                     {projects.map((project) => (
@@ -418,29 +671,41 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
 
 
                 <div className="space-y-2">
-                  <label className="block text-sm font-medium text-slate-700">Task Due Date</label>
+                  <label className="block text-sm font-medium text-slate-700">Default Due Date *</label>
                   <input
-                    className="h-11 w-full rounded-xl border border-emerald-100 bg-white px-4 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5]"
+                    className="h-11 w-full rounded-xl border border-emerald-100 bg-white px-4 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
                     onChange={(event) => setTaskForm({ ...taskForm, dueDate: event.target.value })}
+                    disabled={taskDetailsLocked}
                     type="datetime-local"
                     value={taskForm.dueDate}
                   />
+                  <p className="mt-1 text-xs text-slate-500">Used only when a task row does not have its own due date.</p>
                 </div>
               </div>
 
-              <div className="rounded-[26px] border border-[#d8ecbb] bg-[#f8fcf1] p-4 sm:p-5">
-                <p className="text-sm font-medium text-slate-700">Assign Employees</p>
+              {!isAssignedSubmitOnly ? <div className="rounded-[26px] border border-[#d8ecbb] bg-[#f8fcf1] p-4 sm:p-5">
+                <p className="text-sm font-medium text-slate-700">Assign Employees *</p>
                 <div className="relative mt-4" ref={employeesDropdownRef}>
                   <button
                     type="button"
-                    onClick={() => setEmployeesOpen((current) => !current)}
-                    className="flex w-full items-center justify-between rounded-2xl border border-[#d8ecbb] bg-white px-4 py-3 text-left text-sm text-slate-900 shadow-sm transition hover:border-[#8fc740] hover:bg-[#fbfef7]"
+                    onClick={() => {
+                      if (showPermissionPopupForLockedTask()) {
+                        return;
+                      }
+                      setEmployeesOpen((current) => !current);
+                    }}
+                    className={[
+                      'flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left text-sm shadow-sm transition',
+                      taskDetailsLocked
+                        ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
+                        : 'border-[#d8ecbb] bg-white text-slate-900 hover:border-[#8fc740] hover:bg-[#fbfef7]',
+                    ].join(' ')}
                   >
-                    <span className="truncate pr-3 text-slate-700">{selectedEmployeesLabel}</span>
+                    <span className={['truncate pr-3', taskDetailsLocked ? 'text-slate-400' : 'text-slate-700'].join(' ')}>{selectedEmployeesLabel}</span>
                     {employeesOpen ? <ChevronUpIcon className="h-5 w-5 text-slate-500" /> : <ChevronDownIcon className="h-5 w-5 text-slate-500" />}
                   </button>
 
-                  {employeesOpen ? (
+                  {employeesOpen && !taskDetailsLocked ? (
                     <div className="absolute left-0 right-0 z-20 mt-2 max-h-72 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-lg">
                       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                         {selectableEmployees.map((employee) => (
@@ -462,7 +727,25 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
                     </div>
                   ) : null}
                 </div>
-              </div>
+              </div> : (
+                <div className="rounded-[26px] border border-[#d8ecbb] bg-[#f8fcf1] p-4 sm:p-5">
+                  <p className="text-sm font-medium text-slate-700">Assigned Employees</p>
+                  <p className="mt-2 rounded-2xl border border-[#d8ecbb] bg-white px-4 py-3 text-sm text-slate-700">{selectedEmployeesLabel}</p>
+                </div>
+              )}
+
+              {mode === 'edit' ? (
+                <div className="grid gap-3 rounded-[26px] border border-[#d8ecbb] bg-white p-4 sm:grid-cols-2 sm:p-5">
+                  <div className="rounded-2xl bg-[#f8fcf1] px-4 py-3">
+                    <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Assigned By</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">{assignedByName}</p>
+                  </div>
+                  <div className="rounded-2xl bg-[#f8fcf1] px-4 py-3">
+                    <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Assigned To</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">{selectedEmployeesLabel}</p>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="rounded-[26px] border border-[#d8ecbb] bg-[#f8fcf1] p-4 sm:p-5">
                 <div className="flex items-start justify-between gap-4">
@@ -470,22 +753,53 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
                     <p className="text-lg font-semibold text-slate-900">Project Tasks</p>
                     <p className="text-sm text-slate-500">{mode === 'edit' ? 'Update the existing task details below.' : 'Start with Task 1, then click add button for Task 2, Task 3, and more.'}</p>
                   </div>
-                  <button type="button" onClick={addTaskItem} className="inline-flex shrink-0 items-center gap-2 rounded-full border border-[#8fc740] bg-white px-5 py-3 text-sm font-bold text-[#123b76] shadow-sm transition hover:bg-[#f6fbef]">
+                  {!isAssignedSubmitOnly ? <button type="button" onClick={addTaskItem} disabled={taskDetailsLocked} className="inline-flex shrink-0 items-center gap-2 rounded-full border border-[#8fc740] bg-white px-5 py-3 text-sm font-bold text-[#123b76] shadow-sm transition hover:bg-[#f6fbef] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400">
                     <PlusIcon className="h-4 w-4" />
                     Add Task
-                  </button>
+                  </button> : null}
                 </div>
                 <div className="mt-5 space-y-4">
-                  {taskItems.map((item, index) => (
+                  {taskItems.map((item, index) => {
+                    const proofUploadDisabled = taskDetailsLocked ? !assignedProofRequired : false;
+                    return (
                     <div key={item.id} className="space-y-3 rounded-[24px] border border-[#d8ecbb] bg-white p-4 shadow-[0_10px_26px_rgba(72,116,28,0.05)]">
                       <p className="text-sm font-semibold text-slate-800">{mode === 'edit' && index === 0 ? 'Task Details' : `Task ${index + 1}`}</p>
-                      <input className={fieldClassName} value={item.title} onChange={(event) => updateTaskItem(item.id, 'title', event.target.value)} placeholder={mode === 'edit' && index === 0 ? 'Enter task title' : `Enter task ${index + 1} title`} />
-                      <input className={fieldClassName} value={item.description} onChange={(event) => updateTaskItem(item.id, 'description', event.target.value)} placeholder={mode === 'edit' && index === 0 ? 'Enter task description' : `Enter task ${index + 1} description`} />
-                      <div className="grid gap-3 lg:grid-cols-[minmax(140px,0.6fr)_minmax(220px,1.2fr)_auto] lg:items-center">
+                      <label className="flex items-center gap-3 rounded-2xl border border-[#d8ecbb] bg-[#fbfef7] px-4 py-3 text-sm font-semibold text-slate-800">
+                          <input
+                            checked={item.requireProof}
+                            disabled={taskDetailsLocked}
+                            onChange={(event) => updateTaskItemProofRequired(item.id, event.target.checked)}
+                            type="checkbox"
+                          />
+                          <span>Require proof file/photo when assigned user marks done.</span>
+                        </label>
+                      <input className={fieldClassName} value={item.title} onChange={(event) => updateTaskItem(item.id, 'title', event.target.value)} disabled={taskDetailsLocked} placeholder={mode === 'edit' && index === 0 ? 'Enter task title' : `Enter task ${index + 1} title`} />
+                      <input className={fieldClassName} value={item.description} onChange={(event) => updateTaskItem(item.id, 'description', event.target.value)} disabled={taskDetailsLocked} placeholder={mode === 'edit' && index === 0 ? 'Enter task description' : `Enter task ${index + 1} description`} />
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        <input
+                          className="h-[50px] rounded-2xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                          disabled={taskDetailsLocked}
+                          onChange={(event) => updateTaskItem(item.id, 'dueDate', event.target.value)}
+                          required={!isAssignedSubmitOnly && !taskForm.dueDate}
+                          type="datetime-local"
+                          value={item.dueDate}
+                        />
                         <select
-                          className="h-[50px] rounded-2xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5]"
+                          className="h-[50px] rounded-2xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                          disabled={taskDetailsLocked}
+                          onChange={(event) => updateTaskItem(item.id, 'qualityRating', event.target.value)}
+                          value={item.qualityRating || ''}
+                        >
+                          <option value="">Select quality</option>
+                          <option value="GOOD">Good</option>
+                          <option value="GREAT">Great</option>
+                          <option value="OUTSTANDING">Outstanding</option>
+                          <option value="LMB">LMB</option>
+                        </select>
+                        <select
+                          className="h-[50px] rounded-2xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                           value={mode === 'edit' && index === 0 ? taskForm.status : 'PENDING'}
-                          disabled={mode === 'edit' && index > 0}
+                          disabled={!canChangeTaskStatus || (mode === 'edit' && index > 0)}
                           onChange={(event) => {
                             if (mode === 'edit' && index > 0) {
                               return;
@@ -500,23 +814,71 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
                             <option key={status} value={status}>{formatTaskStatusLabel(status)}</option>
                           ))}
                         </select>
+                        <button
+                          type="button"
+                          onClick={() => addNcItem(item.id)}
+                          disabled={taskDetailsLocked}
+                          className="inline-flex h-[50px] items-center justify-center rounded-2xl border border-[#8fc740] bg-white px-4 text-sm font-bold text-[#123b76] transition hover:bg-[#f6fbef] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                        >
+                          Add NC
+                        </button>
+                      </div>
+                      {item.ncItems.length ? (
+                        <div className="space-y-2 rounded-2xl border border-[#d8ecbb] bg-[#fbfef7] p-3">
+                          <p className="text-sm font-semibold text-slate-800">NC entries</p>
+                          {item.ncItems.map((nc, ncIndex) => (
+                            <div key={`${item.id}-nc-${ncIndex}`} className="flex flex-col gap-2 sm:flex-row">
+                              <input
+                                className={fieldClassName}
+                                disabled={taskDetailsLocked}
+                                onChange={(event) => updateNcItem(item.id, ncIndex, event.target.value)}
+                                placeholder={`NC ${ncIndex + 1}`}
+                                value={nc}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => removeNcItem(item.id, ncIndex)}
+                                disabled={taskDetailsLocked}
+                                className="inline-flex h-11 items-center justify-center rounded-2xl border border-red-100 bg-red-50 px-4 text-sm font-semibold text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div className="grid gap-3 lg:grid-cols-[minmax(220px,1.2fr)_auto] lg:items-center">
                         <input
-                          className="block h-[50px] w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition file:mr-3 file:h-8 file:rounded-xl file:border-0 file:bg-[#8fc740] file:px-3 file:text-sm file:font-semibold file:text-[#123b76] hover:file:bg-[#7fb337] focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5]"
+                          className={[
+                            'block h-[50px] w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition file:mr-3 file:h-8 file:rounded-xl file:border-0 file:bg-[#8fc740] file:px-3 file:text-sm file:font-semibold file:text-[#123b76] hover:file:bg-[#7fb337] focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5]',
+                            proofUploadDisabled ? 'cursor-not-allowed bg-slate-100 text-slate-400 opacity-60 file:bg-slate-200 file:text-slate-500 hover:file:bg-slate-200' : '',
+                          ].join(' ')}
                           type="file"
                           accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.rtf,.ppt,.pptx"
                           multiple
+                          disabled={proofUploadDisabled}
                           onChange={(event) => {
+                            if (proofUploadDisabled) {
+                              dispatchToast('warning', assignedProofRequired ? 'Proof upload is disabled for this task.' : 'Assigned by did not require proof file/photo for this task.');
+                              event.currentTarget.value = '';
+                              return;
+                            }
                             void handleTaskFilesChange(item.id, event.target.files);
                             event.currentTarget.value = '';
                           }}
                         />
+                        {taskDetailsLocked && !assignedProofRequired ? (
+                          <p className="text-xs font-medium text-slate-500 lg:col-span-2">Assigned by did not require proof file/photo for this task.</p>
+                        ) : taskDetailsLocked && assignedProofRequired ? (
+                          <p className="text-xs font-medium text-slate-500 lg:col-span-2">Proof file/photo upload is enabled because assigned by required proof.</p>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => removeTaskItem(item.id)}
-                          disabled={!canRemoveTaskItem(item.id)}
+                          disabled={taskDetailsLocked || !canRemoveTaskItem(item.id)}
                           className={[
                             'inline-flex h-[50px] items-center justify-center gap-2 rounded-2xl border px-4 text-sm font-medium transition',
-                            !canRemoveTaskItem(item.id) ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : 'border-[#d8ecbb] bg-white text-slate-700 hover:border-[#8fc740] hover:bg-[#f6fbef] hover:text-[#123b76]',
+                            taskDetailsLocked || !canRemoveTaskItem(item.id) ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : 'border-[#d8ecbb] bg-white text-slate-700 hover:border-[#8fc740] hover:bg-[#f6fbef] hover:text-[#123b76]',
                           ].join(' ')}
                         >
                           <XMarkIcon className="h-4 w-4" />
@@ -557,23 +919,90 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
                                     <EyeIcon className="h-4 w-4" />
                                     Preview
                                   </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => removeTaskMedia(item.id, media.id || media.url)}
-                                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-red-100 bg-red-50 text-red-600 transition hover:border-red-200 hover:bg-red-100"
-                                    aria-label={`Remove ${getTaskMediaLabel(media)}`}
-                                  >
-                                    <TrashIcon className="h-4 w-4" />
-                                  </button>
+                                  {canRemoveTaskMedia(media) ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => removeTaskMedia(item.id, media.id || media.url)}
+                                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-red-100 bg-red-50 text-red-600 transition hover:border-red-200 hover:bg-red-100"
+                                      aria-label={`Remove ${getTaskMediaLabel(media)}`}
+                                    >
+                                      <TrashIcon className="h-4 w-4" />
+                                    </button>
+                                  ) : null}
                                 </div>
                               </div>
                             ))}
                           </div>
                         ) : null}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
+
+              {mode === 'edit' && currentTask ? (
+                <div className="rounded-[26px] border border-[#d8ecbb] bg-[#f8fcf1] p-4 sm:p-5">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <p className="text-lg font-semibold text-slate-900">Task Description Discussion</p>
+                      <p className="text-sm text-slate-500">Your notes show on the right, other people&apos;s notes show on the left.</p>
+                    </div>
+                    <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#42601c]">
+                      {taskDescriptionNotes.length} description{taskDescriptionNotes.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+
+                  <div className="mt-5 max-h-[420px] space-y-3 overflow-y-auto rounded-3xl border border-[#d8ecbb] bg-white p-3 sm:p-4">
+                    {taskDescriptionNotes.length ? (
+                      [...taskDescriptionNotes]
+                        .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime())
+                        .map((note) => {
+                          const isMine = Boolean(me?.id && note.createdById === me.id);
+                          return (
+                            <div key={note.id} className={['flex', isMine ? 'justify-end' : 'justify-start'].join(' ')}>
+                              <div
+                                className={[
+                                  'max-w-[82%] rounded-3xl px-4 py-3 text-sm shadow-sm',
+                                  isMine
+                                    ? 'rounded-br-md bg-[#8fc740] text-[#123b76]'
+                                    : 'rounded-bl-md border border-slate-200 bg-slate-50 text-slate-700',
+                                ].join(' ')}
+                              >
+                                <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-[0.12em] opacity-75">
+                                  <span>{isMine ? 'You' : note.createdByName}</span>
+                                  <span>{formatNoteDate(note.createdAt)}</span>
+                                </div>
+                                <p className="whitespace-pre-wrap leading-6">{getTaskDescriptionNoteText(note.message)}</p>
+                              </div>
+                            </div>
+                          );
+                        })
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                        No task descriptions added yet.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+                    <textarea
+                      className="min-h-[96px] w-full resize-y rounded-2xl border border-emerald-100 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5]"
+                      onChange={(event) => setNoteMessage(event.target.value)}
+                      placeholder="Add description note"
+                      disabled={!canAddTaskDescriptionDiscussion}
+                      value={noteMessage}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void submitTaskNote()}
+                      disabled={sendingNote || !noteMessage.trim() || !canAddTaskDescriptionDiscussion}
+                      className="inline-flex min-h-[48px] items-center justify-center rounded-2xl bg-[#8fc740] px-6 py-3 text-sm font-bold text-[#123b76] shadow-[0_14px_28px_rgba(143,199,64,0.22)] transition hover:bg-[#7fb337] disabled:cursor-not-allowed disabled:opacity-60 sm:self-end"
+                    >
+                      {sendingNote ? 'Adding...' : 'Add Description'}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </form>
 
           </section>

@@ -7,6 +7,7 @@ type TaskMediaPayload = {
   url: string;
   label?: string;
   mimeType?: string;
+  createdById?: string | null;
 };
 
 @Injectable()
@@ -43,6 +44,9 @@ export class TaskService {
       dueDate?: string | null;
       assignedEmployeeIds?: string[];
       media?: TaskMediaPayload[];
+      requireProof?: boolean;
+      qualityRating?: string | null;
+      ncItems?: string[];
     },
   ) {
     return this.emsService.createTask(authorization, payload);
@@ -60,6 +64,9 @@ export class TaskService {
       dueDate?: string | null;
       assignedEmployeeIds?: string[];
       media?: TaskMediaPayload[];
+      requireProof?: boolean;
+      qualityRating?: string | null;
+      ncItems?: string[];
     },
   ) {
     return this.emsService.updateTask(authorization, taskId, payload);
@@ -71,6 +78,18 @@ export class TaskService {
     payload: { status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' },
   ) {
     return this.emsService.updateTaskStatus(authorization, taskId, payload);
+  }
+
+  addTaskNote(
+    authorization: string | undefined,
+    taskId: string,
+    payload: { message: string; markDone?: boolean },
+  ) {
+    return this.emsService.addTaskNote(authorization, taskId, payload);
+  }
+
+  approveTask(authorization: string | undefined, taskId: string) {
+    return this.emsService.approveTask(authorization, taskId);
   }
 
   deleteTask(authorization: string | undefined, taskId: string) {

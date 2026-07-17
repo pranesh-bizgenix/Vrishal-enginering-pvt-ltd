@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { api, getToken } from '../../../lib/api';
 import { clearAuth } from '../../../lib/auth';
 import { getWorkspaceNavItems, routeSection } from '../../../lib/workspace';
-import { canManageTeamRecords, getAssignableEmployeesForViewer, isAdminRole } from '../../../lib/hierarchy';
+import { canManageTeamRecords, canRunReports, getAssignableEmployeesForViewer, isAdminRole } from '../../../lib/hierarchy';
 import { DashboardSidebar, DashboardTopbar } from '../../../../components/DashboardShell';
 import type { DashboardResponse, Employee, NavItem, Project, ProjectStatus, SectionKey } from '../../../dashboard/types';
 import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
@@ -146,6 +146,7 @@ export default function EditProjectPage() {
 
   const me = dashboard?.employee;
   const isAdmin = isAdminRole(me?.roles ?? []);
+  const canEditProject = Boolean(me?.roles.includes('SA1'));
   const canManage = canManageTeamRecords(me?.roles ?? []);
   const navItems = useMemo<NavItem[]>(() => getWorkspaceNavItems(canManage, isAdmin, me?.roles ?? []), [canManage, isAdmin, me?.roles]);
   const initials = me?.name?.trim()?.charAt(0)?.toUpperCase() || 'A';
@@ -184,6 +185,10 @@ export default function EditProjectPage() {
 
   async function submitProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canEditProject) {
+      setError('Only SA1 can edit projects.');
+      return;
+    }
     if (!projectId) {
       setError('Project not found.');
       return;
@@ -196,6 +201,10 @@ export default function EditProjectPage() {
     }
     if (!projectForm.assignedEmployeeIds.length) {
       setError('Assign Employees is required.');
+      return;
+    }
+    if (!projectForm.dueDate) {
+      setError('Project Due Date is required.');
       return;
     }
 
@@ -218,8 +227,13 @@ export default function EditProjectPage() {
     <main className="min-h-screen bg-[#edf2f7] text-slate-900 lg:flex">
       <DashboardSidebar activeSection="projects" navItems={navItems} onClose={() => setSidebarOpen(false)} onSelect={handleSection} open={sidebarOpen} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <DashboardTopbar canRunReport={isAdmin} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} subtitle="Task Management System" title="Edit Project" />
+        <DashboardTopbar canRunReport={canRunReports(me?.roles ?? [])} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} subtitle="Task Management System" title="Edit Project" />
         <section className="px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
+          {dashboard && !canEditProject ? (
+            <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
+              Only SA1 can edit projects.
+            </div>
+          ) : null}
           {error ? <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] sm:p-6 lg:p-7">
             <form className="space-y-4" onSubmit={submitProject}>
@@ -231,25 +245,25 @@ export default function EditProjectPage() {
                 </div>
                 <div className="flex flex-wrap gap-3">
                   <button className={secondaryButtonClassName} onClick={() => router.push('/projects')} type="button">Cancel</button>
-                  <button className={primaryButtonClassName} disabled={saving} type="submit">{saving ? 'Saving...' : 'Update Project'}</button>
+                  <button className={primaryButtonClassName} disabled={saving || !canEditProject} type="submit">{saving ? 'Saving...' : 'Update Project'}</button>
                 </div>
               </div>
               <div className="grid gap-4 md:grid-cols-2">
               <Field label="Project Name">
-                <input className={fieldClassName} onChange={(event) => setProjectForm({ ...projectForm, name: event.target.value })} placeholder="Project name" required value={projectForm.name} />
+                <input className={fieldClassName} disabled={!canEditProject} onChange={(event) => setProjectForm({ ...projectForm, name: event.target.value })} placeholder="Project name" required value={projectForm.name} />
               </Field>
               <Field label="Project Type">
-                <input className={fieldClassName} onChange={(event) => setProjectForm({ ...projectForm, projectType: event.target.value })} placeholder="Project type" value={projectForm.projectType} />
+                <input className={fieldClassName} disabled={!canEditProject} onChange={(event) => setProjectForm({ ...projectForm, projectType: event.target.value })} placeholder="Project type" value={projectForm.projectType} />
               </Field>
               <Field label="Project Status">
-                <select className={fieldClassName} onChange={(event) => setProjectForm({ ...projectForm, projectStatus: event.target.value as ProjectStatus })} value={projectForm.projectStatus}>
+                <select className={fieldClassName} disabled={!canEditProject} onChange={(event) => setProjectForm({ ...projectForm, projectStatus: event.target.value as ProjectStatus })} value={projectForm.projectStatus}>
                   {projectStatusOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
               </Field>
               <Field label="Project Description">
-                <textarea className={`${fieldClassName} min-h-28 resize-y`} onChange={(event) => setProjectForm({ ...projectForm, description: event.target.value })} placeholder="Description" value={projectForm.description} />
+                <textarea className={`${fieldClassName} min-h-28 resize-y`} disabled={!canEditProject} onChange={(event) => setProjectForm({ ...projectForm, description: event.target.value })} placeholder="Description" value={projectForm.description} />
               </Field>
               <div className="rounded-[26px] border border-slate-200 bg-slate-50 p-4 sm:p-5">
                 <div className="flex flex-col gap-2">
@@ -259,13 +273,18 @@ export default function EditProjectPage() {
                 <div className="relative mt-4" ref={employeeDropdownRef}>
                   <button
                     type="button"
-                    onClick={() => setEmployeesOpen((current) => !current)}
+                    onClick={() => {
+                      if (!canEditProject) {
+                        return;
+                      }
+                      setEmployeesOpen((current) => !current);
+                    }}
                     className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-900 transition hover:border-slate-300"
                   >
                     <span className="truncate pr-3 text-slate-700">{selectedEmployeesLabel}</span>
                     {employeesOpen ? <ChevronUpIcon className="h-5 w-5 text-slate-500" /> : <ChevronDownIcon className="h-5 w-5 text-slate-500" />}
                   </button>
-                  {employeesOpen ? (
+                  {employeesOpen && canEditProject ? (
                     <div className="absolute left-0 right-0 z-20 mt-2 max-h-72 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-lg">
                       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                         {selectableEmployees.map((employee) => {
@@ -283,7 +302,7 @@ export default function EditProjectPage() {
                             >
                               <input
                                 checked={projectForm.assignedEmployeeIds.includes(employee.id)}
-                                disabled={isInactiveAssigned}
+                                disabled={!canEditProject || isInactiveAssigned}
                                 onChange={() =>
                                   setProjectForm({
                                     ...projectForm,
@@ -302,7 +321,7 @@ export default function EditProjectPage() {
                 </div>
               </div>
               <Field label="Due Date">
-                <input className={fieldClassName} onChange={(event) => setProjectForm({ ...projectForm, dueDate: event.target.value })} type="datetime-local" value={projectForm.dueDate} />
+                <input className={fieldClassName} disabled={!canEditProject} onChange={(event) => setProjectForm({ ...projectForm, dueDate: event.target.value })} type="datetime-local" value={projectForm.dueDate} />
               </Field>
               </div>
             </form>

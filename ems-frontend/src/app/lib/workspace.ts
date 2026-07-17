@@ -8,7 +8,11 @@ export function getWorkspaceNavItems(canManage: boolean, isAdmin: boolean, roles
   const hasTeamAccess = canManage || isAdmin || canManageTeamRecords(roles);
   const baseItems: NavItem[] = [
     { key: 'overview', label: 'Dashboard' },
+    { key: 'projects', label: 'Projects' },
     { key: 'tasks', label: 'Tasks' },
+    { key: 'mis', label: 'MIS' },
+    { key: 'activity', label: 'Notification Logs' },
+    { key: 'employees', label: 'Employees' },
   ];
 
   if (!isAdmin && !isLeader && !hasTeamAccess) {
@@ -23,7 +27,6 @@ export function getWorkspaceNavItems(canManage: boolean, isAdmin: boolean, roles
     { key: 'activity', label: 'Notification Logs' },
     { key: 'employees', label: 'Employees' },
   ];
-
 
   return items;
 }

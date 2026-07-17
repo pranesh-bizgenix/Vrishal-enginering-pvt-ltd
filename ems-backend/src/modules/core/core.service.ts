@@ -2,6 +2,8 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
   UnauthorizedException,
 } from '@nestjs/common';
 import {
@@ -34,6 +36,7 @@ type TaskMediaPayload = {
   url: string;
   label?: string;
   mimeType?: string;
+  createdById?: string | null;
 };
 
 const UUID_PATTERN =
@@ -135,6 +138,10 @@ type TaskRow = {
   projectId: string;
   dueDate: string | null;
   createdAt: string;
+  createdByEmployeeId?: string | null;
+  requireProof?: boolean;
+  qualityRating?: string | null;
+  ncItems?: string[] | null;
 };
 
 type TaskAssignmentRow = {
@@ -160,6 +167,7 @@ type TaskMediaRow = {
   label: string | null;
   mimeType: string | null;
   createdAt: string;
+  createdByEmployeeId: string | null;
 };
 
 const ROLE_POWER: Record<Role, number> = {
@@ -173,11 +181,36 @@ const ROLE_OPTIONS: Role[] = ['SA1', 'SA2', 'ADMIN', 'LEADER', 'EMPLOYEE'];
 const TASK_ADMIN_WHATSAPP_ROLES: Role[] = ['SA1', 'SA2', 'ADMIN'];
 
 @Injectable()
-export class CoreService {
+export class CoreService implements OnModuleInit, OnModuleDestroy {
   private employees = new Map<string, EmployeeRecord>();
   private readonly notifications: NotificationRecord[] = [];
+  private readonly taskReminderTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
+  private taskReminderScanTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly whatsappService: WhatsappService) {}
+
+  async onModuleInit() {
+    await this.ensureTaskReminderDeliveryTable();
+    await this.scanDueTaskWhatsappProgressReminders();
+    this.taskReminderScanTimer = setInterval(() => {
+      void this.scanDueTaskWhatsappProgressReminders();
+    }, 60_000);
+  }
+
+  onModuleDestroy() {
+    if (this.taskReminderScanTimer) {
+      clearInterval(this.taskReminderScanTimer);
+      this.taskReminderScanTimer = null;
+    }
+
+    for (const timer of this.taskReminderTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.taskReminderTimers.clear();
+  }
 
   private async query<T = unknown>(
     sql: string,
@@ -260,6 +293,36 @@ export class CoreService {
       .toLowerCase()
       .replace(/_/g, ' ')
       .replace(/(^|\s)\S/g, (char) => char.toUpperCase());
+  }
+
+  private calculateTaskPriority(dueDate?: string | null) {
+    if (!dueDate) {
+      return 'LOW';
+    }
+
+    const due = new Date(dueDate);
+    if (!Number.isFinite(due.getTime())) {
+      return 'LOW';
+    }
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const dueStart = new Date(due);
+    dueStart.setHours(0, 0, 0, 0);
+    const daysRemaining = Math.ceil(
+      (dueStart.getTime() - todayStart.getTime()) / 86_400_000,
+    );
+
+    if (daysRemaining <= 2) {
+      return 'CRITICAL';
+    }
+    if (daysRemaining === 3) {
+      return 'HIGH';
+    }
+    if (daysRemaining === 4) {
+      return 'MEDIUM';
+    }
+    return 'LOW';
   }
 
   private buildProjectCode(name: string) {
@@ -475,9 +538,10 @@ export class CoreService {
   }
 
   private async fetchTaskRows(taskIds?: string[]) {
+    await this.ensureTaskDetailColumns();
     if (taskIds?.length) {
       return this.query<TaskRow>(
-        `SELECT id, title, description, type, status, project_id AS "projectId", due_date AS "dueDate", created_at AS "createdAt"
+        `SELECT id, title, description, type, status, project_id AS "projectId", due_date AS "dueDate", created_at AS "createdAt", created_by_employee_id AS "createdByEmployeeId", require_proof AS "requireProof", quality_rating AS "qualityRating", nc_items AS "ncItems"
          FROM tasks
          WHERE deleted_at IS NULL AND id = ANY($1::uuid[])
          ORDER BY created_at DESC`,
@@ -486,10 +550,29 @@ export class CoreService {
     }
 
     return this.query<TaskRow>(
-      `SELECT id, title, description, type, status, project_id AS "projectId", due_date AS "dueDate", created_at AS "createdAt"
+      `SELECT id, title, description, type, status, project_id AS "projectId", due_date AS "dueDate", created_at AS "createdAt", created_by_employee_id AS "createdByEmployeeId", require_proof AS "requireProof", quality_rating AS "qualityRating", nc_items AS "ncItems"
        FROM tasks
        WHERE deleted_at IS NULL
        ORDER BY created_at DESC`,
+    );
+  }
+
+  private async ensureTaskDetailColumns() {
+    await this.query(
+      `ALTER TABLE tasks
+       ADD COLUMN IF NOT EXISTS quality_rating VARCHAR(50) NULL`,
+    );
+    await this.query(
+      `ALTER TABLE tasks
+       ADD COLUMN IF NOT EXISTS nc_items JSONB NOT NULL DEFAULT '[]'::jsonb`,
+    );
+    await this.query(
+      `ALTER TABLE tasks
+       ADD COLUMN IF NOT EXISTS created_by_employee_id UUID NULL`,
+    );
+    await this.query(
+      `ALTER TABLE tasks
+       ADD COLUMN IF NOT EXISTS require_proof BOOLEAN NOT NULL DEFAULT FALSE`,
     );
   }
 
@@ -554,8 +637,16 @@ export class CoreService {
         url TEXT NOT NULL,
         label VARCHAR(255),
         mime_type VARCHAR(255),
+        created_by_employee_id UUID NULL REFERENCES employees(id) ON DELETE SET NULL,
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
       )`,
+    );
+    await this.query(
+      `ALTER TABLE task_media
+       ADD COLUMN IF NOT EXISTS created_by_employee_id UUID NULL REFERENCES employees(id) ON DELETE SET NULL`,
+    );
+    await this.query(
+      `CREATE INDEX IF NOT EXISTS idx_task_media_created_by_employee_id ON task_media (created_by_employee_id)`,
     );
   }
 
@@ -580,6 +671,7 @@ export class CoreService {
            url,
            label,
            mime_type AS "mimeType",
+           created_by_employee_id AS "createdByEmployeeId",
            created_at AS "createdAt"
          FROM task_media
          WHERE task_id = ANY($1::uuid[])
@@ -596,6 +688,7 @@ export class CoreService {
          url,
          label,
          mime_type AS "mimeType",
+         created_by_employee_id AS "createdByEmployeeId",
          created_at AS "createdAt"
        FROM task_media
        ORDER BY created_at ASC`,
@@ -624,19 +717,66 @@ export class CoreService {
       }));
   }
 
-  private async replaceTaskMedia(taskId: string, media?: TaskMediaPayload[]) {
+  private normalizeTaskQualityRating(value?: string | null) {
+    const normalized = value?.trim().toUpperCase();
+    return ['GOOD', 'GREAT', 'OUTSTANDING', 'LMB'].includes(normalized || '')
+      ? normalized
+      : null;
+  }
+
+  private normalizeNcItems(items?: string[] | null) {
+    return Array.isArray(items)
+      ? items.map((item) => item.trim()).filter(Boolean)
+      : [];
+  }
+
+  private async replaceTaskMedia(
+    taskId: string,
+    media: TaskMediaPayload[] | undefined,
+    currentEmployee: EmployeeRecord,
+  ) {
     if (!Array.isArray(media)) {
       return;
     }
 
     await this.ensureTaskMediaTable();
-    await this.query(`DELETE FROM task_media WHERE task_id = $1`, [taskId]);
+    const existingMedia = await this.fetchTaskMedia([taskId]);
+    const existingById = new Map(existingMedia.map((item) => [item.id, item]));
+    const normalizedMedia = this.normalizeTaskMedia(media);
+    const submittedExistingIds = new Set(
+      normalizedMedia
+        .filter((item) => existingById.has(item.id))
+        .map((item) => item.id),
+    );
+    const deletableIds = existingMedia
+      .filter(
+        (item) =>
+          !submittedExistingIds.has(item.id) &&
+          this.canDeleteRecords(currentEmployee),
+      )
+      .map((item) => item.id);
+
+    if (deletableIds.length) {
+      await this.query(`DELETE FROM task_media WHERE id = ANY($1::uuid[])`, [
+        deletableIds,
+      ]);
+    }
+
     const now = new Date().toISOString();
-    for (const item of this.normalizeTaskMedia(media)) {
+    for (const item of normalizedMedia.filter((item) => !existingById.has(item.id))) {
       await this.query(
-        `INSERT INTO task_media (id, task_id, type, url, label, mime_type, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [item.id, taskId, item.type, item.url, item.label, item.mimeType, now],
+        `INSERT INTO task_media (id, task_id, type, url, label, mime_type, created_by_employee_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          item.id,
+          taskId,
+          item.type,
+          item.url,
+          item.label,
+          item.mimeType,
+          currentEmployee.id,
+          now,
+        ],
       );
     }
   }
@@ -721,23 +861,81 @@ export class CoreService {
       return null;
     }
 
-    const power = this.getHighestRolePower(employee.roles);
-    if (power >= ROLE_POWER.ADMIN) {
+    if (employee.roles.includes('SA2')) {
       return new Set(
         Array.from(this.employees.values())
-          .filter((item) => item.id === employee.id || this.getHighestRolePower(item.roles) < power)
+          .filter((item) => !item.roles.includes('SA1'))
           .map((item) => item.id),
       );
     }
 
-    if (employee.roles.includes('LEADER')) {
-      return new Set([
-        employee.id,
-        ...this.getLeaderTeamEmployeeIds(employee.id),
-      ]);
-    }
+    // Old hierarchy rule kept for reference:
+    // if (employee.roles.includes('SA2')) {
+    //   return new Set(
+    //     Array.from(this.employees.values())
+    //       .filter((item) => !item.roles.includes('SA1'))
+    //       .map((item) => item.id),
+    //   );
+    // }
+    //
+    // const power = this.getHighestRolePower(employee.roles);
+    // if (power >= ROLE_POWER.ADMIN) {
+    //   return new Set(
+    //     Array.from(this.employees.values())
+    //       .filter((item) => item.id === employee.id || this.getHighestRolePower(item.roles) < power)
+    //       .map((item) => item.id),
+    //   );
+    // }
+    //
+    // if (employee.roles.includes('LEADER')) {
+    //   return new Set([
+    //     employee.id,
+    //     ...this.getLeaderTeamEmployeeIds(employee.id),
+    //   ]);
+    // }
 
     return new Set([employee.id]);
+  }
+
+  private getTaskAssignmentScope(employee: EmployeeRecord) {
+    const visibleScope = this.getVisibleEmployeeScope(employee);
+    if (!visibleScope || !employee.roles.includes('LEADER')) {
+      return visibleScope;
+    }
+
+    const leaderIds = Array.from(this.employees.values())
+      .filter(
+        (item) =>
+          item.active &&
+          this.getHighestRolePower(item.roles) === ROLE_POWER.LEADER,
+      )
+      .map((item) => item.id);
+
+    return new Set([...visibleScope, ...leaderIds]);
+  }
+
+  private getTaskAssignableEmployeeIds() {
+    return new Set(
+      Array.from(this.employees.values())
+        .filter(
+          (employee) =>
+            employee.active &&
+            !employee.roles.includes('SA1') &&
+            !employee.roles.includes('SA2'),
+        )
+        .map((employee) => employee.id),
+    );
+  }
+
+  private taskMatchesEmployeeScope(
+    task: { assignedEmployeeIds: string[]; createdByEmployeeId?: string | null },
+    scope: Set<string> | null,
+    employeeId: string,
+  ) {
+    return (
+      task.createdByEmployeeId === employeeId ||
+      this.itemMatchesEmployeeScope(task.assignedEmployeeIds, scope)
+    );
   }
 
   private getHighestRolePower(roles: Role[]) {
@@ -846,19 +1044,31 @@ export class CoreService {
       const assignedEmployees = assignedEmployeeIds
         .map((id) => this.employees.get(id))
         .filter((employee): employee is EmployeeRecord => Boolean(employee));
+      const taskNotes = notesByTask.get(task.id) || [];
+      const taskApproved = taskNotes.some((note) =>
+        note.message.trim().toLowerCase().startsWith('approved by'),
+      );
+      const effectiveStatus =
+        task.status === 'COMPLETED' && !taskApproved ? 'PENDING' : task.status;
 
       return {
         id: task.id,
         title: task.title,
         description: task.description || '',
         type: task.type,
-        status: task.status,
+        status: effectiveStatus,
+        priority: this.calculateTaskPriority(task.dueDate),
         projectId: task.projectId,
         projectName: project?.name || 'Unassigned project',
         assignedEmployeeIds,
         assignedEmployees,
+        createdAt: task.createdAt,
         dueDate: task.dueDate,
-        notes: (notesByTask.get(task.id) || []).map((note) => ({
+        createdByEmployeeId: task.createdByEmployeeId || null,
+        requireProof: Boolean(task.requireProof),
+        qualityRating: this.normalizeTaskQualityRating(task.qualityRating),
+        ncItems: this.normalizeNcItems(task.ncItems),
+        notes: taskNotes.map((note) => ({
           id: note.id,
           message: note.message,
           createdAt: note.createdAt,
@@ -872,6 +1082,7 @@ export class CoreService {
           url: media.url,
           label: media.label || undefined,
           mimeType: media.mimeType || undefined,
+          createdById: media.createdByEmployeeId,
         })),
       };
     });
@@ -888,7 +1099,7 @@ export class CoreService {
     const [assignmentRows, taskRows] = await Promise.all([
       this.fetchProjectAssignments(projectIds),
       this.query<TaskRow>(
-        `SELECT id, title, description, type, status, project_id AS "projectId", due_date AS "dueDate", created_at AS "createdAt"
+        `SELECT id, title, description, type, status, project_id AS "projectId", due_date AS "dueDate", created_at AS "createdAt", created_by_employee_id AS "createdByEmployeeId", require_proof AS "requireProof", quality_rating AS "qualityRating", nc_items AS "ncItems"
          FROM tasks
          WHERE deleted_at IS NULL AND project_id = ANY($1::uuid[])
          ORDER BY created_at DESC`,
@@ -994,17 +1205,19 @@ export class CoreService {
     );
   }
 
-  private async resolveTaskWhatsappAudience() {
+  private async resolveTaskWhatsappAudience(
+    taskView: Awaited<ReturnType<CoreService['getTaskById']>>,
+  ) {
     await this.syncEmployeesFromDatabase();
-    const allEmployees = Array.from(this.employees.values());
-
-    const managerEmployees = allEmployees.filter((employee) =>
-      employee.roles.some((role) => TASK_ADMIN_WHATSAPP_ROLES.includes(role)),
-    );
+    const assignedEmployees = taskView.assignedEmployeeIds
+      .map((employeeId) => this.employees.get(employeeId))
+      .filter((employee): employee is EmployeeRecord => Boolean(employee));
 
     return {
-      recipients: this.getActiveWhatsappRecipients(managerEmployees),
-      recipientRoles: [...TASK_ADMIN_WHATSAPP_ROLES],
+      recipients: this.getActiveWhatsappRecipients(assignedEmployees),
+      recipientRoles: Array.from(
+        new Set(assignedEmployees.flatMap((employee) => employee.roles)),
+      ),
     };
   }
 
@@ -1013,7 +1226,7 @@ export class CoreService {
     taskView: Awaited<ReturnType<CoreService['getTaskById']>>,
     message: string,
   ) {
-    const audience = await this.resolveTaskWhatsappAudience();
+    const audience = await this.resolveTaskWhatsappAudience(taskView);
     const delivery = await this.whatsappService.sendMessage(
       audience.recipients,
       message,
@@ -1038,7 +1251,7 @@ export class CoreService {
     parameters: string[],
     logMessage: string,
   ) {
-    const audience = await this.resolveTaskWhatsappAudience();
+    const audience = await this.resolveTaskWhatsappAudience(taskView);
     const delivery = await this.whatsappService.sendTemplate(
       audience.recipients,
       {
@@ -1059,6 +1272,196 @@ export class CoreService {
     return delivery;
   }
 
+  private async ensureTaskReminderDeliveryTable() {
+    await this.query(
+      `CREATE TABLE IF NOT EXISTS task_reminder_deliveries (
+        task_id UUID NOT NULL,
+        percent INTEGER NOT NULL,
+        sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (task_id, percent)
+      )`,
+    );
+  }
+
+  private formatTaskReminderDateTime(value: string | null | undefined) {
+    if (!value) {
+      return 'Not set';
+    }
+
+    return new Date(value).toLocaleString('en-IN', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZone: 'Asia/Kolkata',
+    });
+  }
+
+  private clearTaskWhatsappProgressReminders(taskId: string) {
+    for (const [key, timer] of Array.from(this.taskReminderTimers.entries())) {
+      if (key.startsWith(`${taskId}:`)) {
+        clearTimeout(timer);
+        this.taskReminderTimers.delete(key);
+      }
+    }
+  }
+
+  private scheduleLongTimeout(
+    key: string,
+    callback: () => void,
+    delayMs: number,
+  ) {
+    const maxDelay = 2_147_483_647;
+    if (delayMs <= maxDelay) {
+      const timer = setTimeout(callback, Math.max(0, delayMs));
+      this.taskReminderTimers.set(key, timer);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.scheduleLongTimeout(key, callback, delayMs - maxDelay);
+    }, maxDelay);
+    this.taskReminderTimers.set(key, timer);
+  }
+
+  private scheduleTaskWhatsappProgressReminders(
+    taskView: Awaited<ReturnType<CoreService['getTaskById']>>,
+    assignedByName: string,
+  ) {
+    this.clearTaskWhatsappProgressReminders(taskView.id);
+
+    if (!taskView.dueDate || taskView.status === 'COMPLETED') {
+      return;
+    }
+
+    const createdAt = taskView.createdAt
+      ? new Date(taskView.createdAt).getTime()
+      : Date.now();
+    const dueAt = new Date(taskView.dueDate).getTime();
+    const now = Date.now();
+
+    if (!Number.isFinite(createdAt) || !Number.isFinite(dueAt) || dueAt <= createdAt) {
+      return;
+    }
+
+    const reminderSteps = [
+      { percent: 33, label: 'First progress reminder' },
+      { percent: 66, label: 'Second progress reminder' },
+      { percent: 90, label: 'Final urgent reminder before due date' },
+    ];
+
+    for (const step of reminderSteps) {
+      const triggerAt = createdAt + ((dueAt - createdAt) * step.percent) / 100;
+      if (triggerAt <= now) {
+        continue;
+      }
+
+      const reminderKey = `${taskView.id}:${step.percent}`;
+      this.scheduleLongTimeout(reminderKey, () => {
+        this.taskReminderTimers.delete(reminderKey);
+        void this.sendTaskWhatsappProgressReminder(
+          taskView.id,
+          step.percent,
+          step.label,
+          assignedByName,
+        );
+      }, triggerAt - now);
+    }
+  }
+
+  private async sendTaskWhatsappProgressReminder(
+    taskId: string,
+    percent: number,
+    label: string,
+    assignedByName: string,
+  ) {
+    const rows = await this.fetchTaskRows([taskId]);
+    const task = (await this.buildTaskViews(rows))[0];
+    if (!task || task.status === 'COMPLETED') {
+      return;
+    }
+
+    await this.ensureTaskReminderDeliveryTable();
+    const inserted = await this.query<{ taskId: string }>(
+      `INSERT INTO task_reminder_deliveries (task_id, percent)
+       VALUES ($1, $2)
+       ON CONFLICT DO NOTHING
+       RETURNING task_id AS "taskId"`,
+      [taskId, percent],
+    );
+    if (!inserted.length) {
+      return;
+    }
+
+    const dueText = this.formatTaskReminderDateTime(task.dueDate);
+    const assignedEmployees =
+      task.assignedEmployees.map((employee) => employee.name).join(', ') ||
+      'None';
+    await this.sendTaskWhatsappTemplateNotification(
+      'Task Reminder',
+      task,
+      'task_created_notifications',
+      [
+        task.title,
+        task.projectName,
+        `${assignedEmployees} | ${percent}% - ${label} | Due: ${dueText}`,
+      ],
+      this.buildTaskWhatsappMessage(
+        `${percent}% Reminder`,
+        task,
+        assignedByName,
+        `${label}\nDue: ${dueText}`,
+      ),
+    );
+  }
+
+  private async scanDueTaskWhatsappProgressReminders() {
+    await this.ensureTaskReminderDeliveryTable();
+    const rows = await this.query<{ id: string }>(
+      `SELECT id
+       FROM tasks
+       WHERE deleted_at IS NULL
+         AND status <> 'COMPLETED'
+         AND due_date IS NOT NULL
+         AND due_date > created_at`,
+    );
+    const taskIds = rows.map((row) => row.id);
+    if (!taskIds.length) {
+      return;
+    }
+
+    const taskViews = await this.buildTaskViews(await this.fetchTaskRows(taskIds));
+    const now = Date.now();
+    const reminderSteps = [
+      { percent: 33, label: 'First progress reminder' },
+      { percent: 66, label: 'Second progress reminder' },
+      { percent: 90, label: 'Final urgent reminder before due date' },
+    ];
+
+    for (const taskView of taskViews) {
+      const createdAt = new Date(taskView.createdAt).getTime();
+      const dueAt = taskView.dueDate ? new Date(taskView.dueDate).getTime() : NaN;
+      if (!Number.isFinite(createdAt) || !Number.isFinite(dueAt)) {
+        continue;
+      }
+
+      const assignedByName =
+        (taskView.createdByEmployeeId &&
+          this.employees.get(taskView.createdByEmployeeId)?.name) ||
+        'System';
+
+      for (const step of reminderSteps) {
+        const triggerAt = createdAt + ((dueAt - createdAt) * step.percent) / 100;
+        if (triggerAt <= now) {
+          await this.sendTaskWhatsappProgressReminder(
+            taskView.id,
+            step.percent,
+            step.label,
+            assignedByName,
+          );
+        }
+      }
+    }
+  }
+
   private buildTaskWhatsappMessage(
     action: string,
     taskView: Awaited<ReturnType<CoreService['getTaskById']>>,
@@ -1073,6 +1476,7 @@ export class CoreService {
       `Task: ${taskView.title}`,
       `Project: ${taskView.projectName}`,
       `Assigned: ${assignedEmployees}`,
+      `Due: ${this.formatTaskReminderDateTime(taskView.dueDate)}`,
       `Status: ${taskView.status}`,
       `Updated by: ${actorName}`,
       extraLine || '',
@@ -1174,7 +1578,9 @@ export class CoreService {
   private async fetchPaginatedTaskViews(
     scope: Set<string> | null,
     options: ListQueryOptions,
+    employeeId: string,
   ) {
+    await this.ensureTaskDetailColumns();
     const safePage = this.normalizePage(options.page);
     const safePerPage = this.normalizePerPage(options.perPage);
     const offset = (safePage - 1) * safePerPage;
@@ -1184,11 +1590,15 @@ export class CoreService {
 
     if (scope) {
       params.push(Array.from(scope));
+      const scopeParam = `$${params.length}`;
+      params.push(employeeId);
+      const employeeParam = `$${params.length}`;
       where.push(
-        `EXISTS (
-          SELECT 1 FROM task_assignments scoped_ta
-          WHERE scoped_ta.task_id = t.id AND scoped_ta.employee_id = ANY($${params.length}::uuid[])
-        )`,
+        `(t.created_by_employee_id = ${employeeParam}::uuid
+          OR EXISTS (
+            SELECT 1 FROM task_assignments scoped_ta
+            WHERE scoped_ta.task_id = t.id AND scoped_ta.employee_id = ANY(${scopeParam}::uuid[])
+          ))`,
       );
     }
 
@@ -1229,7 +1639,7 @@ export class CoreService {
     const limitParam = `$${params.length - 1}`;
     const offsetParam = `$${params.length}`;
     const rows = await this.query<TaskRow>(
-      `SELECT t.id, t.title, t.description, t.type, t.status, t.project_id AS "projectId", t.due_date AS "dueDate", t.created_at AS "createdAt"
+      `SELECT t.id, t.title, t.description, t.type, t.status, t.project_id AS "projectId", t.due_date AS "dueDate", t.created_at AS "createdAt", t.created_by_employee_id AS "createdByEmployeeId", t.require_proof AS "requireProof"
        ${fromClause}
        ORDER BY t.created_at DESC
        LIMIT ${limitParam} OFFSET ${offsetParam}`,
@@ -1262,14 +1672,16 @@ export class CoreService {
       return true;
     }
 
-    if (!log.category.startsWith('Task')) {
-      return false;
-    }
-
     const text = this.getNotificationLogText(log);
     const scopedEmployees = Array.from(scope)
       .map((employeeId) => this.employees.get(employeeId))
       .filter((employee): employee is EmployeeRecord => Boolean(employee));
+
+    if (!log.category.startsWith('Task')) {
+      return scopedEmployees.some((employee) =>
+        employee.roles.some((role) => log.recipientRoles.includes(role)),
+      );
+    }
 
     if (
       scopedEmployees.some(
@@ -1350,10 +1762,27 @@ export class CoreService {
     return this.getHighestRolePower(employee.roles) >= ROLE_POWER.ADMIN;
   }
 
+  private canViewAllRecords(employee: EmployeeRecord) {
+    return employee.roles.includes('SA1') || employee.roles.includes('SA2');
+  }
+
+  private canDeleteRecords(employee: EmployeeRecord) {
+    return employee.roles.includes('SA1');
+  }
+
   async requireAdminAccess(authorization?: string) {
     const employee = await this.getCurrentEmployee(authorization);
     if (!this.canManageRecords(employee)) {
       throw new UnauthorizedException('Admin access is required.');
+    }
+
+    return employee;
+  }
+
+  async requireReportAccess(authorization?: string) {
+    const employee = await this.getCurrentEmployee(authorization);
+    if (!employee.roles.includes('SA1') && !employee.roles.includes('SA2')) {
+      throw new UnauthorizedException('Only SA1 or SA2 can run reports.');
     }
 
     return employee;
@@ -1492,9 +1921,12 @@ export class CoreService {
     },
   ) {
     const currentEmployee = await this.getCurrentEmployee(authorization);
-    if (!this.canCreateEditTeamRecords(currentEmployee)) {
+    if (
+      !currentEmployee.roles.includes('SA1') &&
+      !currentEmployee.roles.includes('SA2')
+    ) {
       throw new UnauthorizedException(
-        'Only leader-level or higher users can create employees.',
+        'Only SA1 or SA2 can create employees.',
       );
     }
 
@@ -1591,11 +2023,6 @@ export class CoreService {
     },
   ) {
     const currentEmployee = await this.getCurrentEmployee(authorization);
-    if (!this.canCreateEditTeamRecords(currentEmployee)) {
-      throw new UnauthorizedException(
-        'Only leader-level or higher users can update employees.',
-      );
-    }
     await this.ensureEmployeeHierarchyColumn();
     const existingEmployeeRows = await this.fetchEmployeeListRows(employeeId);
     const existingEmployee = existingEmployeeRows[0];
@@ -1608,6 +2035,19 @@ export class CoreService {
 
     if (!existingEmployee) {
       throw new NotFoundException('Employee not found.');
+    }
+
+    const existingRoles = this.normalizeRoles(
+      existingEmployee.employeeRoles || existingEmployee.userRoles,
+      existingEmployee.email || undefined,
+    );
+    const canUpdateEmployee =
+      currentEmployee.roles.includes('SA1') ||
+      (currentEmployee.roles.includes('SA2') && !existingRoles.includes('SA1'));
+    if (!canUpdateEmployee) {
+      throw new UnauthorizedException(
+        'Only SA1 can edit SA1 employees. SA2 can edit non-SA1 employees.',
+      );
     }
 
     const visibleScope = this.getVisibleEmployeeScope(currentEmployee);
@@ -1725,8 +2165,8 @@ export class CoreService {
 
   async deleteEmployee(authorization: string | undefined, employeeId: string) {
     const currentEmployee = await this.getCurrentEmployee(authorization);
-    if (!this.canManageRecords(currentEmployee)) {
-      throw new UnauthorizedException('Only admin-level users can delete employees.');
+    if (!this.canDeleteRecords(currentEmployee)) {
+      throw new UnauthorizedException('Only SA1 can delete employees.');
     }
     if (currentEmployee.id === employeeId) {
       throw new UnauthorizedException('You cannot delete your own account.');
@@ -1821,6 +2261,9 @@ export class CoreService {
         'Only leader-level or higher users can create projects.',
       );
     }
+    if (!payload.dueDate) {
+      throw new BadRequestException('Project due date is required.');
+    }
     await this.syncEmployeesFromDatabase();
     const visibleScope = this.getVisibleEmployeeScope(currentEmployee);
     const assignedEmployeeIds = visibleScope
@@ -1878,9 +2321,9 @@ export class CoreService {
     },
   ) {
     const currentEmployee = await this.getCurrentEmployee(authorization);
-    if (!this.canCreateEditTeamRecords(currentEmployee)) {
+    if (!currentEmployee.roles.includes('SA1')) {
       throw new UnauthorizedException(
-        'Only leader-level or higher users can update projects.',
+        'Only SA1 can edit projects.',
       );
     }
 
@@ -1904,6 +2347,15 @@ export class CoreService {
     }
 
     const now = new Date().toISOString();
+    const nextProjectDueDate = Object.prototype.hasOwnProperty.call(
+      payload,
+      'dueDate',
+    )
+      ? payload.dueDate
+      : existing.dueDate;
+    if (!nextProjectDueDate) {
+      throw new BadRequestException('Project due date is required.');
+    }
     await this.query(
       `UPDATE projects
        SET name = $2,
@@ -1921,9 +2373,7 @@ export class CoreService {
         payload.projectType?.trim() ?? existing.projectType ?? '',
         payload.description?.trim() ?? existing.description ?? '',
         payload.projectStatus || existing.projectStatus || 'NOT_STARTED',
-        Object.prototype.hasOwnProperty.call(payload, 'dueDate')
-          ? payload.dueDate
-          : existing.dueDate,
+        nextProjectDueDate,
         now,
       ],
     );
@@ -1962,7 +2412,7 @@ export class CoreService {
     const scope = this.getVisibleEmployeeScope(employee);
 
     if (options?.page) {
-      return this.fetchPaginatedTaskViews(scope, options);
+      return this.fetchPaginatedTaskViews(scope, options, employee.id);
     }
 
     const taskViews = await this.buildTaskViews();
@@ -1970,7 +2420,7 @@ export class CoreService {
     const search = options?.search?.trim().toLowerCase() || '';
     const visibleTasks = taskViews
       .filter((task) =>
-        this.itemMatchesEmployeeScope(task.assignedEmployeeIds, scope),
+        this.taskMatchesEmployeeScope(task, scope, employee.id),
       )
       .filter((task) => {
         if (options?.openOnly && task.status === 'COMPLETED') {
@@ -2013,9 +2463,10 @@ export class CoreService {
     }
 
     if (
-      !this.itemMatchesEmployeeScope(
-        view.assignedEmployeeIds,
+      !this.taskMatchesEmployeeScope(
+        view,
         this.getVisibleEmployeeScope(currentEmployee),
+        currentEmployee.id,
       )
     ) {
       throw new UnauthorizedException('You do not have access to this task.');
@@ -2034,6 +2485,9 @@ export class CoreService {
       dueDate?: string | null;
       assignedEmployeeIds?: string[];
       media?: TaskMediaPayload[];
+      requireProof?: boolean;
+      qualityRating?: string | null;
+      ncItems?: string[];
     },
   ) {
     const currentEmployee = await this.getCurrentEmployee(authorization);
@@ -2044,16 +2498,19 @@ export class CoreService {
     if (!project) {
       throw new NotFoundException('Project not found.');
     }
+    if (!payload.dueDate) {
+      throw new BadRequestException('Task due date is required.');
+    }
 
-    const visibleScope = this.getVisibleEmployeeScope(currentEmployee);
+    const taskAssignableEmployeeIds = this.getTaskAssignableEmployeeIds();
     const requestedAssignedEmployeeIds = payload.assignedEmployeeIds?.length
       ? payload.assignedEmployeeIds
       : this.canManageRecords(currentEmployee)
         ? []
         : [currentEmployee.id];
-    const assignedEmployeeIds = visibleScope
+    const assignedEmployeeIds = taskAssignableEmployeeIds.size
       ? requestedAssignedEmployeeIds.filter((employeeId) =>
-          visibleScope.has(employeeId),
+          taskAssignableEmployeeIds.has(employeeId),
         )
       : requestedAssignedEmployeeIds;
     if (
@@ -2065,9 +2522,10 @@ export class CoreService {
 
     const id = randomUUID();
     const now = new Date().toISOString();
+    await this.ensureTaskDetailColumns();
     await this.query(
-      `INSERT INTO tasks (id, title, description, type, status, project_id, due_date, created_at, updated_at, deleted_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      `INSERT INTO tasks (id, title, description, type, status, project_id, due_date, quality_rating, nc_items, created_by_employee_id, require_proof, created_at, updated_at, deleted_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14)`,
       [
         id,
         payload.title.trim(),
@@ -2076,6 +2534,10 @@ export class CoreService {
         'PENDING',
         payload.projectId,
         payload.dueDate || null,
+        this.normalizeTaskQualityRating(payload.qualityRating),
+        JSON.stringify(this.normalizeNcItems(payload.ncItems)),
+        currentEmployee.id,
+        Boolean(payload.requireProof),
         now,
         now,
         null,
@@ -2091,7 +2553,7 @@ export class CoreService {
       );
     }
 
-    await this.replaceTaskMedia(id, payload.media || []);
+    await this.replaceTaskMedia(id, payload.media || [], currentEmployee);
 
     await this.appendTaskNote(
       id,
@@ -2102,16 +2564,17 @@ export class CoreService {
     await this.sendTaskWhatsappTemplateNotification(
       'Task',
       taskView,
-      'task_created_notification',
+      'task_created_notifications',
       [
         taskView.title,
         taskView.projectName,
-        taskView.assignedEmployees
+        `${taskView.assignedEmployees
           .map((employee) => employee.name)
-          .join(', ') || 'None',
+          .join(', ') || 'None'} | Due: ${this.formatTaskReminderDateTime(taskView.dueDate)}`,
       ],
       this.buildTaskWhatsappMessage('Created', taskView, currentEmployee.name),
     );
+    this.scheduleTaskWhatsappProgressReminders(taskView, currentEmployee.name);
     return taskView;
   }
 
@@ -2127,6 +2590,9 @@ export class CoreService {
       dueDate?: string | null;
       assignedEmployeeIds?: string[];
       media?: TaskMediaPayload[];
+      requireProof?: boolean;
+      qualityRating?: string | null;
+      ncItems?: string[];
     },
   ) {
     const currentEmployee = await this.getCurrentEmployee(authorization);
@@ -2142,8 +2608,91 @@ export class CoreService {
     if (!projectRows[0]) {
       throw new NotFoundException('Project not found.');
     }
+    const mediaOnlyUpdate =
+      Object.prototype.hasOwnProperty.call(payload, 'media') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'title') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'description') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'type') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'projectId') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'dueDate') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'assignedEmployeeIds') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'requireProof') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'qualityRating') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'ncItems') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'status');
+    const statusOnlyUpdate =
+      Object.prototype.hasOwnProperty.call(payload, 'status') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'title') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'description') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'type') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'projectId') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'dueDate') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'assignedEmployeeIds') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'requireProof') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'qualityRating') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'ncItems') &&
+      !Object.prototype.hasOwnProperty.call(payload, 'media');
+    const canEditTaskDetails =
+      this.canViewAllRecords(currentEmployee) ||
+      existing.createdByEmployeeId === currentEmployee.id ||
+      (!existing.createdByEmployeeId &&
+        this.canCreateEditTeamRecords(currentEmployee));
+    const existingAssignedEmployeeIds = (await this.fetchTaskAssignments([taskId])).map(
+      (assignment) => assignment.employeeId,
+    );
+    const isAssignedToTask = existingAssignedEmployeeIds.includes(currentEmployee.id);
+    const canChangeTaskStatus = canEditTaskDetails || isAssignedToTask;
+    const canUpdateCompletedTask =
+      currentEmployee.roles.includes('SA1') ||
+      (canChangeTaskStatus && statusOnlyUpdate);
+    if (
+      existing.status === 'COMPLETED' &&
+      !canUpdateCompletedTask &&
+      !mediaOnlyUpdate
+    ) {
+      throw new UnauthorizedException('Only SA1 can update completed tasks.');
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(payload, 'status') &&
+      payload.status &&
+      payload.status !== existing.status &&
+      !canChangeTaskStatus
+    ) {
+      throw new UnauthorizedException('Only the assigned-by user can change task status.');
+    }
+    if (!canEditTaskDetails) {
+      const detailChangeRequested =
+        Object.prototype.hasOwnProperty.call(payload, 'title') ||
+        Object.prototype.hasOwnProperty.call(payload, 'description') ||
+        Object.prototype.hasOwnProperty.call(payload, 'type') ||
+        Object.prototype.hasOwnProperty.call(payload, 'projectId') ||
+        Object.prototype.hasOwnProperty.call(payload, 'dueDate') ||
+        Object.prototype.hasOwnProperty.call(payload, 'assignedEmployeeIds') ||
+        Object.prototype.hasOwnProperty.call(payload, 'requireProof') ||
+        Object.prototype.hasOwnProperty.call(payload, 'qualityRating') ||
+        Object.prototype.hasOwnProperty.call(payload, 'ncItems');
+      if (detailChangeRequested) {
+        throw new UnauthorizedException(
+          'Assigned users can only submit completion status and proof attachments.',
+        );
+      }
+      if (
+        Object.prototype.hasOwnProperty.call(payload, 'media') &&
+        !existing.requireProof
+      ) {
+        throw new UnauthorizedException(
+          'Proof file/photo upload is disabled for this task.',
+        );
+      }
+      if (payload.status === 'COMPLETED') {
+        throw new BadRequestException(
+          'Submit done for approval before completing this task.',
+        );
+      }
+    }
 
     const now = new Date().toISOString();
+    await this.ensureTaskDetailColumns();
     await this.query(
       `UPDATE tasks
        SET title = $2,
@@ -2152,7 +2701,10 @@ export class CoreService {
            status = $5,
            project_id = $6,
            due_date = $7,
-           updated_at = $8
+           quality_rating = $8,
+           nc_items = $9::jsonb,
+           require_proof = $10,
+           updated_at = $11
        WHERE id = $1 AND deleted_at IS NULL`,
       [
         taskId,
@@ -2164,15 +2716,39 @@ export class CoreService {
         Object.prototype.hasOwnProperty.call(payload, 'dueDate')
           ? payload.dueDate
           : existing.dueDate,
+        Object.prototype.hasOwnProperty.call(payload, 'qualityRating')
+          ? this.normalizeTaskQualityRating(payload.qualityRating)
+          : existing.qualityRating || null,
+        Object.prototype.hasOwnProperty.call(payload, 'ncItems')
+          ? JSON.stringify(this.normalizeNcItems(payload.ncItems))
+          : JSON.stringify(this.normalizeNcItems(existing.ncItems)),
+        Object.prototype.hasOwnProperty.call(payload, 'requireProof')
+          ? Boolean(payload.requireProof)
+          : Boolean(existing.requireProof),
         now,
       ],
     );
 
     if (payload.assignedEmployeeIds) {
+      const taskAssignableEmployeeIds = this.getTaskAssignableEmployeeIds();
+      const nextAssignedEmployeeIds = taskAssignableEmployeeIds.size
+        ? payload.assignedEmployeeIds.filter((employeeId) =>
+            taskAssignableEmployeeIds.has(employeeId),
+          )
+        : payload.assignedEmployeeIds;
+      if (
+        this.canCreateEditTeamRecords(currentEmployee) &&
+        payload.assignedEmployeeIds.length &&
+        !nextAssignedEmployeeIds.length
+      ) {
+        throw new BadRequestException(
+          'Select at least one employee visible to your role.',
+        );
+      }
       await this.query(`DELETE FROM task_assignments WHERE task_id = $1`, [
         taskId,
       ]);
-      for (const employeeId of payload.assignedEmployeeIds) {
+      for (const employeeId of nextAssignedEmployeeIds) {
         await this.query(
           `INSERT INTO task_assignments (task_id, employee_id, created_at)
            VALUES ($1, $2, $3)
@@ -2182,9 +2758,9 @@ export class CoreService {
       }
     }
 
-    await this.replaceTaskMedia(taskId, payload.media);
+    await this.replaceTaskMedia(taskId, payload.media, currentEmployee);
 
-    const nextView = await this.getTaskById(authorization, taskId);
+    let nextView = await this.getTaskById(authorization, taskId);
     const changeSummary: string[] = [];
     if ((payload.title?.trim() || existing.title) !== existing.title) {
       changeSummary.push(`title to "${nextView.title}"`);
@@ -2245,8 +2821,27 @@ export class CoreService {
       );
     }
 
+    const markedComplete =
+      (payload.status || existing.status) === 'COMPLETED' &&
+      existing.status !== 'COMPLETED';
+    const selfAssignedCompletion =
+      markedComplete &&
+      nextView.createdByEmployeeId === currentEmployee.id &&
+      nextView.assignedEmployeeIds.includes(currentEmployee.id) &&
+      !nextView.notes.some((note) =>
+        note.message.trim().toLowerCase().startsWith('approved by'),
+      );
+    if (selfAssignedCompletion) {
+      await this.appendTaskNote(
+        taskId,
+        currentEmployee.id,
+        `Approved by ${currentEmployee.name}.`,
+        false,
+      );
+      nextView = await this.getTaskById(authorization, taskId);
+    }
     await this.sendTaskWhatsappTemplateNotification(
-      'Task',
+      markedComplete ? 'Task Complete' : 'Task',
       nextView,
       'task_update_notifications',
       [
@@ -2257,12 +2852,24 @@ export class CoreService {
         this.formatStatusLabel(nextView.status),
       ],
       this.buildTaskWhatsappMessage(
-        'Updated',
+        markedComplete ? 'Marked Complete' : 'Updated',
         nextView,
         currentEmployee.name,
-        `Changes: ${changeSummary.join(', ') || 'Task details updated.'}`,
+        markedComplete
+          ? `Completed by: ${currentEmployee.name}`
+          : `Changes: ${changeSummary.join(', ') || 'Task details updated.'}`,
       ),
     );
+
+    if (nextView.status === 'COMPLETED') {
+      this.clearTaskWhatsappProgressReminders(nextView.id);
+    } else {
+      const assignedByName =
+        (nextView.createdByEmployeeId &&
+          this.employees.get(nextView.createdByEmployeeId)?.name) ||
+        currentEmployee.name;
+      this.scheduleTaskWhatsappProgressReminders(nextView, assignedByName);
+    }
     return nextView;
   }
 
@@ -2285,22 +2892,35 @@ export class CoreService {
     if (!task) {
       throw new NotFoundException('Task not found.');
     }
-
     const taskView = await this.getTaskById(authorization, taskId);
-    if (
-      !this.itemMatchesEmployeeScope(
-        taskView.assignedEmployeeIds,
-        this.getVisibleEmployeeScope(currentEmployee),
-      )
-    ) {
+    const canAddTaskNote =
+      this.canViewAllRecords(currentEmployee) ||
+      taskView.createdByEmployeeId === currentEmployee.id ||
+      taskView.assignedEmployeeIds.includes(currentEmployee.id);
+    if (!canAddTaskNote) {
       throw new UnauthorizedException(
         'You do not have access to add notes to this task.',
       );
+    }
+    if (payload.markDone && !taskView.assignedEmployeeIds.includes(currentEmployee.id)) {
+      throw new UnauthorizedException('Only assigned users can submit tasks done.');
+    }
+    if (payload.markDone && taskView.notes.some((note) => note.markDone)) {
+      throw new BadRequestException('Task is already waiting for approval.');
     }
 
     const message = payload.message?.trim();
     if (!message) {
       throw new BadRequestException('Task note is required.');
+    }
+
+    if (payload.markDone && task.requireProof) {
+      const existingMedia = await this.fetchTaskMedia([taskId]);
+      if (!existingMedia.length) {
+        throw new BadRequestException(
+          'Proof file/photo is required before marking this task complete.',
+        );
+      }
     }
 
     await this.appendTaskNote(
@@ -2309,15 +2929,93 @@ export class CoreService {
       message,
       Boolean(payload.markDone),
     );
-    const nextView = await this.getTaskById(authorization, taskId);
+    let nextView = await this.getTaskById(authorization, taskId);
+    const selfAssignedDone =
+      Boolean(payload.markDone) &&
+      nextView.createdByEmployeeId === currentEmployee.id &&
+      nextView.assignedEmployeeIds.includes(currentEmployee.id) &&
+      !nextView.notes.some((note) =>
+        note.message.trim().toLowerCase().startsWith('approved by'),
+      );
+    if (selfAssignedDone) {
+      await this.appendTaskNote(
+        taskId,
+        currentEmployee.id,
+        `Approved by ${currentEmployee.name}.`,
+        false,
+      );
+      await this.query(
+        `UPDATE tasks
+         SET status = 'COMPLETED',
+             updated_at = $2
+         WHERE id = $1 AND deleted_at IS NULL`,
+        [taskId, new Date().toISOString()],
+      );
+      this.clearTaskWhatsappProgressReminders(taskId);
+      nextView = await this.getTaskById(authorization, taskId);
+    }
+    const completionLine = payload.markDone
+      ? `Completed by: ${currentEmployee.name}`
+      : undefined;
     await this.sendTaskWhatsappNotification(
       'Task Note',
       nextView,
       this.buildTaskWhatsappMessage(
-        payload.markDone ? 'Marked Complete' : 'Note Updated',
+        payload.markDone ? 'Submitted Done' : 'Note Updated',
         nextView,
         currentEmployee.name,
-        `Note: ${message}`,
+        completionLine ? `${completionLine}\nNote: ${message}` : `Note: ${message}`,
+      ),
+    );
+    return nextView;
+  }
+
+  async approveTask(authorization: string | undefined, taskId: string) {
+    const currentEmployee = await this.getCurrentEmployee(authorization);
+    const taskView = await this.getTaskById(authorization, taskId);
+    const canApproveTask =
+      this.canViewAllRecords(currentEmployee) ||
+      taskView.createdByEmployeeId === currentEmployee.id;
+    if (!canApproveTask) {
+      throw new UnauthorizedException('Only the assigned-by user, SA1, or SA2 can approve tasks.');
+    }
+
+    const alreadyApproved = taskView.notes.some((note) =>
+      note.message.trim().toLowerCase().startsWith('approved by'),
+    );
+    if (alreadyApproved) {
+      return taskView;
+    }
+    const submittedDone = taskView.notes.some((note) => note.markDone);
+    if (!submittedDone) {
+      throw new BadRequestException('Assigned user must submit done before approval.');
+    }
+
+    await this.appendTaskNote(
+      taskId,
+      currentEmployee.id,
+      `Approved by ${currentEmployee.name}.`,
+      false,
+    );
+    if (taskView.status !== 'COMPLETED') {
+      await this.query(
+        `UPDATE tasks
+         SET status = 'COMPLETED',
+             updated_at = $2
+         WHERE id = $1 AND deleted_at IS NULL`,
+        [taskId, new Date().toISOString()],
+      );
+      this.clearTaskWhatsappProgressReminders(taskId);
+    }
+    const nextView = await this.getTaskById(authorization, taskId);
+    await this.sendTaskWhatsappNotification(
+      'Task Approved',
+      nextView,
+      this.buildTaskWhatsappMessage(
+        'Approved',
+        nextView,
+        currentEmployee.name,
+        `Approved by: ${currentEmployee.name}`,
       ),
     );
     return nextView;
@@ -2325,9 +3023,9 @@ export class CoreService {
 
   async deleteTask(authorization: string | undefined, taskId: string) {
     const currentEmployee = await this.getCurrentEmployee(authorization);
-    if (!this.canManageRecords(currentEmployee)) {
+    if (!this.canDeleteRecords(currentEmployee)) {
       throw new UnauthorizedException(
-        'You do not have access to delete tasks.',
+        'Only SA1 can delete tasks.',
       );
     }
 
@@ -2339,6 +3037,7 @@ export class CoreService {
 
     const taskView = await this.getTaskById(authorization, taskId);
 
+    this.clearTaskWhatsappProgressReminders(taskId);
     await this.query(`DELETE FROM tasks WHERE id = $1`, [taskId]);
 
     await this.sendTaskWhatsappNotification(
@@ -2351,9 +3050,9 @@ export class CoreService {
 
   async deleteProject(authorization: string | undefined, projectId: string) {
     const currentEmployee = await this.getCurrentEmployee(authorization);
-    if (!this.canManageRecords(currentEmployee)) {
+    if (!this.canDeleteRecords(currentEmployee)) {
       throw new UnauthorizedException(
-        'You do not have access to delete projects.',
+        'Only SA1 can delete projects.',
       );
     }
 
@@ -2587,6 +3286,8 @@ export class CoreService {
   ) {
     const employee = await this.getCurrentEmployee(authorization);
     const selectedEmployeeId = employeeId?.trim();
+    const canViewAllNotifications =
+      employee.roles.includes('SA1') || employee.roles.includes('SA2');
 
     if (selectedEmployeeId) {
       const selectedEmployee = this.employees.get(selectedEmployeeId);
@@ -2594,14 +3295,8 @@ export class CoreService {
         throw new BadRequestException('Selected employee is not available.');
       }
 
-      const isManager = this.canManageRecords(employee);
-      const leaderTeamIds = employee.roles.includes('LEADER')
-        ? this.getLeaderTeamEmployeeIds(employee.id)
-        : [];
       const canViewSelected =
-        isManager ||
-        selectedEmployeeId === employee.id ||
-        leaderTeamIds.includes(selectedEmployeeId);
+        canViewAllNotifications || selectedEmployeeId === employee.id;
 
       if (!canViewSelected) {
         throw new UnauthorizedException('Unauthorized');
@@ -2614,7 +3309,7 @@ export class CoreService {
       );
     }
 
-    if (this.canManageRecords(employee)) {
+    if (canViewAllNotifications) {
       return this.fetchNotificationLogs(page, perPage);
     }
 
@@ -2644,7 +3339,8 @@ export class CoreService {
 
   async getDashboard(authorization?: string) {
     const employee = await this.getCurrentEmployee(authorization);
-    const notificationScope = this.canManageRecords(employee)
+    const notificationScope =
+      employee.roles.includes('SA1') || employee.roles.includes('SA2')
       ? null
       : new Set([employee.id]);
     const [projectViews, allTaskViews, notificationLogsPage] =
