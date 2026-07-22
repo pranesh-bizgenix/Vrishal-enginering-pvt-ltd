@@ -58,13 +58,27 @@ function getCurrentPeriodValue(period: MisPeriod) {
   }
 
   if (period === 'week') {
-    return getIsoWeekKey(now.toISOString());
+    const start = new Date(now);
+    const day = start.getDay() || 7;
+    start.setDate(start.getDate() - day + 1);
+    return start.toISOString().slice(0, 10);
   }
 
   return '';
 }
 
-function dateMatchesPeriod(value: string | null | undefined, period: MisPeriod, periodValue: string) {
+function getCurrentPeriodEndValue(period: MisPeriod) {
+  if (period !== 'week') {
+    return '';
+  }
+
+  const startValue = getCurrentPeriodValue(period);
+  const end = new Date(startValue);
+  end.setDate(end.getDate() + 6);
+  return end.toISOString().slice(0, 10);
+}
+
+function dateMatchesPeriod(value: string | null | undefined, period: MisPeriod, periodValue: string, periodEndValue = '') {
   if (period === 'all') {
     return true;
   }
@@ -81,11 +95,16 @@ function dateMatchesPeriod(value: string | null | undefined, period: MisPeriod, 
     return value.slice(0, 7) === periodValue;
   }
 
+  if (period === 'week' && periodEndValue) {
+    const dateValue = value.slice(0, 10);
+    return dateValue >= periodValue && dateValue <= periodEndValue;
+  }
+
   return getIsoWeekKey(value) === periodValue;
 }
 
-function taskMatchesPeriod(task: Task, period: MisPeriod, periodValue: string) {
-  return dateMatchesPeriod(task.dueDate || task.createdAt, period, periodValue);
+function taskMatchesPeriod(task: Task, period: MisPeriod, periodValue: string, periodEndValue = '') {
+  return dateMatchesPeriod(task.dueDate || task.createdAt, period, periodValue, periodEndValue);
 }
 
 function getTaskCompletedAt(task: Task) {
@@ -160,7 +179,7 @@ function formatProjectName(project: Project) {
 
 
 
-function getPeriodLabel(period: MisPeriod, periodValue: string) {
+function getPeriodLabel(period: MisPeriod, periodValue: string, periodEndValue = '') {
   if (period === 'all') {
     return 'All Time';
   }
@@ -174,7 +193,9 @@ function getPeriodLabel(period: MisPeriod, periodValue: string) {
   }
 
   if (period === 'week') {
-    return `Week Wise: ${periodValue}`;
+    return periodEndValue
+      ? `Week Wise: ${periodValue} to ${periodEndValue}`
+      : `Week Wise: ${periodValue}`;
   }
 
   return `Month Wise: ${periodValue}`;
@@ -455,6 +476,7 @@ export default function MisPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [period, setPeriod] = useState<MisPeriod>('all');
   const [periodValue, setPeriodValue] = useState('');
+  const [periodEndValue, setPeriodEndValue] = useState('');
   const [selectedPersonId, setSelectedPersonId] = useState(() => (typeof window === 'undefined' ? '' : window.localStorage.getItem('ems-dashboard-person-scope') || ''));
   const [loadedAt, setLoadedAt] = useState(0);
 
@@ -552,18 +574,18 @@ export default function MisPage() {
     () =>
       projects
         .filter((project) => project.projectStatus !== 'COMPLETED')
-        .filter((project) => dateMatchesPeriod(project.dueDate || null, period, periodValue) || period === 'all')
+        .filter((project) => dateMatchesPeriod(project.dueDate || null, period, periodValue, periodEndValue) || period === 'all')
         .filter((project) => selectedScopeEmployeeIds ? itemMatchesEmployeeScope(project.assignedEmployeeIds, selectedScopeEmployeeIds) : true),
-    [period, periodValue, projects, selectedScopeEmployeeIds],
+    [period, periodEndValue, periodValue, projects, selectedScopeEmployeeIds],
   );
   const filteredProjectIds = useMemo(() => new Set(filteredProjects.map((project) => project.id)), [filteredProjects]);
   const filteredTasks = useMemo(
     () =>
       tasks
-        .filter((task) => taskMatchesPeriod(task, period, periodValue))
+        .filter((task) => taskMatchesPeriod(task, period, periodValue, periodEndValue))
         .filter((task) => selectedScopeEmployeeIds ? itemMatchesEmployeeScope(task.assignedEmployeeIds, selectedScopeEmployeeIds) : true)
         .filter((task) => task.projectId ? filteredProjectIds.has(task.projectId) : true),
-    [filteredProjectIds, period, periodValue, selectedScopeEmployeeIds, tasks],
+    [filteredProjectIds, period, periodEndValue, periodValue, selectedScopeEmployeeIds, tasks],
   );
   const activeProjectsCount = useMemo(
     () => filteredProjects.filter((project) => project.active && project.projectStatus !== 'COMPLETED').length,
@@ -695,7 +717,7 @@ export default function MisPage() {
   }, [filteredTasks, me?.id, selectedPerson?.id]);
   const isSystemAdminUser = Boolean(me && (me.email?.trim().toLowerCase() === 'admin@sjsangath.com' || me.name?.trim().toLowerCase() === 'admin'));
   const recentNotifications = useMemo(() => {
-    const periodNotifications = (dashboard?.recentNotifications || []).filter((notification) => dateMatchesPeriod(notification.createdAt, period, periodValue));
+    const periodNotifications = (dashboard?.recentNotifications || []).filter((notification) => dateMatchesPeriod(notification.createdAt, period, periodValue, periodEndValue));
     if ((isSystemAdminUser && !selectedPerson) || !me) {
       return periodNotifications;
     }
@@ -707,7 +729,7 @@ export default function MisPage() {
       const taskMatch = assignedTerms.some((term) => message.includes(term));
       return roleMatch || taskMatch;
     });
-  }, [dashboard?.recentNotifications, isSystemAdminUser, me, period, periodValue, personalTasks, selectedPerson]);
+  }, [dashboard?.recentNotifications, isSystemAdminUser, me, period, periodEndValue, periodValue, personalTasks, selectedPerson]);
 
   function handleSection(section: SectionKey) {
     setSidebarOpen(false);
@@ -731,6 +753,7 @@ export default function MisPage() {
   function handlePeriodChange(nextPeriod: MisPeriod) {
     setPeriod(nextPeriod);
     setPeriodValue(getCurrentPeriodValue(nextPeriod));
+    setPeriodEndValue(getCurrentPeriodEndValue(nextPeriod));
   }
 
   function handlePersonScopeChange(employeeId: string) {
@@ -797,7 +820,7 @@ export default function MisPage() {
     const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    const suffix = period === 'all' ? 'all-time' : `${period}-${periodValue}`;
+    const suffix = period === 'all' ? 'all-time' : period === 'week' ? `${period}-${periodValue}-to-${periodEndValue}` : `${period}-${periodValue}`;
     link.href = url;
     link.download = `employee-wise-mis-${suffix}.xls`;
     link.click();
@@ -806,11 +829,11 @@ export default function MisPage() {
 
   function downloadEmployeePdfReport() {
     const generatedAt = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-    const periodLabel = getPeriodLabel(period, periodValue);
+    const periodLabel = getPeriodLabel(period, periodValue, periodEndValue);
     const blob = createEmployeeMisPdf(employeeReportRows, periodLabel, generatedAt);
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    const suffix = period === 'all' ? 'all-time' : `${period}-${periodValue}`;
+    const suffix = period === 'all' ? 'all-time' : period === 'week' ? `${period}-${periodValue}-to-${periodEndValue}` : `${period}-${periodValue}`;
     link.href = url;
     link.download = `employee-wise-mis-${suffix}.pdf`;
     link.click();
@@ -846,13 +869,29 @@ export default function MisPage() {
                   <option value="week">Week Wise</option>
                   <option value="month">Month Wise</option>
                 </select>
-                {period !== 'all' ? (
+                {period !== 'all' && period !== 'week' ? (
                   <input
                     className="h-11 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 sm:w-[180px]"
                     onChange={(event) => setPeriodValue(event.target.value)}
-                    type={period === 'day' ? 'date' : period === 'week' ? 'week' : 'month'}
+                    type={period === 'day' ? 'date' : 'month'}
                     value={periodValue}
                   />
+                ) : null}
+                {period === 'week' ? (
+                  <>
+                    <input
+                      className="h-11 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 sm:w-[160px]"
+                      onChange={(event) => setPeriodValue(event.target.value)}
+                      type="date"
+                      value={periodValue}
+                    />
+                    <input
+                      className="h-11 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 sm:w-[160px]"
+                      onChange={(event) => setPeriodEndValue(event.target.value)}
+                      type="date"
+                      value={periodEndValue}
+                    />
+                  </>
                 ) : null}
                 <button
                   type="button"

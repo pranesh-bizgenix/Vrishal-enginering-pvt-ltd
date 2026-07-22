@@ -7,8 +7,10 @@ import { clearAuth } from '../../lib/auth';
 import { getWorkspaceNavItems, routeSection } from '../../lib/workspace';
 import { canManageTeamRecords, canRunReports, isAdminRole } from '../../lib/hierarchy';
 import { DashboardSidebar, DashboardTopbar } from '../../../components/DashboardShell';
-import type { DashboardResponse, NavItem, Project, SectionKey, Task, TaskMedia } from '../../dashboard/types';
-import { ArrowLeftIcon } from '@heroicons/react/24/outline';
+import type { DashboardResponse, NavItem, PaginatedResponse, Project, SectionKey, Task, TaskMedia } from '../../dashboard/types';
+import { ArrowLeftIcon, TrashIcon } from '@heroicons/react/24/outline';
+
+const PROJECT_TASKS_PER_PAGE = 10;
 
 function EmptyState({ message }: { message: string }) {
   return <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">{message}</div>;
@@ -57,6 +59,10 @@ export default function ProjectViewPage() {
   const router = useRouter();
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [project, setProject] = useState<Project | null>(null);
+  const [projectTasks, setProjectTasks] = useState<Task[]>([]);
+  const [taskPage, setTaskPage] = useState(1);
+  const [taskSearch, setTaskSearch] = useState('');
+  const [totalProjectTasks, setTotalProjectTasks] = useState(0);
   const [taskDrafts, setTaskDrafts] = useState<Record<string, TaskDraft>>({});
   const [updatingTasks, setUpdatingTasks] = useState(false);
   const [uploadingTaskId, setUploadingTaskId] = useState<string | null>(null);
@@ -64,6 +70,7 @@ export default function ProjectViewPage() {
   const [confirmTask, setConfirmTask] = useState<Task | null>(null);
   const [confirmUpdateOpen, setConfirmUpdateOpen] = useState(false);
   const [previewMedia, setPreviewMedia] = useState<TaskMedia | null>(null);
+  const [proofPopupMessage, setProofPopupMessage] = useState('');
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -78,28 +85,32 @@ export default function ProjectViewPage() {
     try {
       const [dashboardData, projectData] = await Promise.all([
         api<DashboardResponse>('/dashboard'),
-        api<Project[]>('/projects'),
+        api<Project>(`/projects/${params.projectId}?includeTasks=false`),
       ]);
+      const canSeeAllTasks = dashboardData.employee.roles.includes('SA1') || dashboardData.employee.roles.includes('SA2');
+      const employeeFilter = canSeeAllTasks ? '' : `&employeeIds=${encodeURIComponent(dashboardData.employee.id)}`;
+      const searchFilter = taskSearch.trim() ? `&search=${encodeURIComponent(taskSearch.trim())}` : '';
+      const taskData = await api<PaginatedResponse<Task>>(
+        `/tasks?projectId=${encodeURIComponent(params.projectId)}&page=${taskPage}&perPage=${PROJECT_TASKS_PER_PAGE}${employeeFilter}${searchFilter}`,
+      );
       setDashboard(dashboardData);
-      const currentProject = projectData.find((item) => item.id === params.projectId) || null;
-      setProject(currentProject);
+      setProject(projectData);
+      setProjectTasks(taskData.items);
+      setTotalProjectTasks(taskData.total);
       setTaskDrafts(
-        currentProject
+        taskData.items
           ? Object.fromEntries(
-              currentProject.tasks.map((task) => [
+              taskData.items.map((task) => [
                 task.id,
                 {
                   title: task.title,
                   description: task.description || '',
-                  completed: task.status === 'COMPLETED',
+                  completed: isTaskChecked(task),
                 },
               ]),
             )
           : {},
       );
-      if (!currentProject) {
-        setError('Project not found.');
-      }
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : 'Unable to load project details.';
       setError(message);
@@ -108,7 +119,7 @@ export default function ProjectViewPage() {
         router.replace('/auth/login');
       }
     }
-  }, [params?.projectId, router]);
+  }, [params?.projectId, router, taskPage, taskSearch]);
 
   useEffect(() => {
     if (!getToken()) {
@@ -117,6 +128,10 @@ export default function ProjectViewPage() {
     }
     void loadData();
   }, [loadData, router]);
+
+  useEffect(() => {
+    setTaskPage(1);
+  }, [taskSearch]);
 
   const me = dashboard?.employee;
   const isAdmin = isAdminRole(me?.roles ?? []);
@@ -134,11 +149,12 @@ export default function ProjectViewPage() {
     }
 
     if (canViewAllProjectTasks) {
-      return project.tasks;
+      return projectTasks;
     }
 
-    return project.tasks.filter((task) => task.assignedEmployeeIds.includes(me.id));
-  }, [canViewAllProjectTasks, me, project]);
+    return projectTasks.filter((task) => task.assignedEmployeeIds.includes(me.id));
+  }, [canViewAllProjectTasks, me, project, projectTasks]);
+  const totalTaskPages = Math.max(1, Math.ceil(totalProjectTasks / PROJECT_TASKS_PER_PAGE));
   const canUpdateVisibleTasks = visibleProjectTasks.some((task) => canEditProject || canToggleTaskStatus(task));
   const employeeTaskSummary = useMemo(() => {
     if (!project || !me) {
@@ -170,11 +186,15 @@ export default function ProjectViewPage() {
     });
   }, [employeeTaskSummary]);
 
-  function updateTaskDraft(taskId: string, changes: Partial<TaskDraft>) {
+  function updateTaskDraft(task: Task, changes: Partial<TaskDraft>) {
     setTaskDrafts((current) => ({
       ...current,
-      [taskId]: {
-        ...(current[taskId] ?? { title: '', description: '', completed: false }),
+      [task.id]: {
+        ...(current[task.id] ?? {
+          title: task.title,
+          description: task.description || '',
+          completed: isTaskChecked(task),
+        }),
         ...changes,
       },
     }));
@@ -184,12 +204,59 @@ export default function ProjectViewPage() {
     return taskDrafts[task.id] ?? {
       title: task.title,
       description: task.description || '',
-      completed: task.status === 'COMPLETED',
+      completed: isTaskChecked(task),
     };
   }
 
   function getTaskMediaLabel(media: TaskMedia) {
     return media.label || (media.type === 'PHOTO' ? 'Photo file' : 'Document file');
+  }
+
+  function getAssignedToLabel(task: Task) {
+    return task.assignedEmployees.map((employee) => employee.name).join(', ') || 'Not assigned';
+  }
+
+  function isTaskApproved(task: Task) {
+    return task.notes.some((note) => note.message.trim().toLowerCase().startsWith('approved by'));
+  }
+
+  function isTaskSubmittedDone(task: Task) {
+    return task.notes.some((note) => note.markDone);
+  }
+
+  function isTaskApproveWaiting(task: Task) {
+    return isTaskSubmittedDone(task) && !isTaskApproved(task);
+  }
+
+  function isTaskChecked(task: Task) {
+    return isTaskApproved(task) || task.status === 'COMPLETED' || isTaskApproveWaiting(task);
+  }
+
+  function canApproveTask(task: Task) {
+    return Boolean(me && isTaskApproveWaiting(task) && (task.createdByEmployeeId === me.id || me.roles.includes('SA1')));
+  }
+
+  function taskHasProofMedia(task: Task) {
+    return Boolean((task.media || []).length);
+  }
+
+  function showProofPopup(message: string) {
+    setProofPopupMessage(message);
+  }
+
+  function toggleTaskCompleted(task: Task) {
+    if (!canToggleTaskStatus(task)) {
+      return;
+    }
+
+    const draft = getTaskDraft(task);
+    const nextCompleted = !draft.completed;
+    if (nextCompleted && task.requireProof && !taskHasProofMedia(task)) {
+      showProofPopup('First upload proof file/photo before marking this task complete.');
+      return;
+    }
+
+    updateTaskDraft(task, { completed: nextCompleted });
   }
 
   async function handleTaskFilesChange(task: Task, files: FileList | null) {
@@ -220,12 +287,13 @@ export default function ProjectViewPage() {
     try {
       const uploadedMedia = await Promise.all(selectedFiles.map((file) => readFileAsTaskMedia(file, me?.id)));
       const nextMedia = [...(task.media || []), ...uploadedMedia];
-      await api<Task>(`/tasks/${task.id}`, {
+      const updatedTask = await api<Task>(`/tasks/${task.id}`, {
         method: 'PATCH',
         body: JSON.stringify({ media: nextMedia }),
       });
       setSuccessMessage('Proof file/photo uploaded.');
       await loadData();
+      setProjectTasks((current) => current.map((item) => (item.id === updatedTask.id ? updatedTask : item)));
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : 'Unable to upload proof file/photo.');
     } finally {
@@ -279,13 +347,14 @@ export default function ProjectViewPage() {
       return;
     }
 
-    const changedTasks = project.tasks.filter((task) => {
+    const changedTasks = visibleProjectTasks.filter((task) => {
       const draft = getTaskDraft(task);
+      const checkedFromDatabase = isTaskChecked(task);
       if (canEditProject) {
         return (
           draft.title.trim() !== task.title ||
           draft.description !== (task.description || '') ||
-          draft.completed !== (task.status === 'COMPLETED')
+          draft.completed !== checkedFromDatabase
         );
       }
 
@@ -293,7 +362,7 @@ export default function ProjectViewPage() {
         return false;
       }
 
-      return draft.completed !== (task.status === 'COMPLETED');
+      return draft.completed !== checkedFromDatabase;
     });
 
     const permittedChangedTasks = changedTasks.filter((task) => canEditProject || canToggleTaskStatus(task));
@@ -311,6 +380,16 @@ export default function ProjectViewPage() {
       return;
     }
 
+    const missingProofTask = permittedChangedTasks.find((task) => {
+      const draft = getTaskDraft(task);
+      return draft.completed && task.status !== 'COMPLETED' && task.requireProof && !taskHasProofMedia(task);
+    });
+    if (missingProofTask) {
+      setConfirmUpdateOpen(false);
+      showProofPopup('First upload proof file/photo before marking this task complete.');
+      return;
+    }
+
     setUpdatingTasks(true);
     setError('');
     setSuccessMessage('');
@@ -318,6 +397,21 @@ export default function ProjectViewPage() {
       await Promise.all(
         permittedChangedTasks.map((task) => {
           const draft = getTaskDraft(task);
+          const checkedFromDatabase = isTaskChecked(task);
+          if (draft.completed && !checkedFromDatabase && task.assignedEmployeeIds.includes(me?.id || '') && !isTaskSubmittedDone(task)) {
+            return api(`/tasks/${task.id}/notes`, {
+              method: 'POST',
+              body: JSON.stringify({
+                message: task.requireProof
+                  ? `${me?.name || 'Assigned user'} submitted work for approval with proof attachment.`
+                  : `${me?.name || 'Assigned user'} submitted work for approval.`,
+                markDone: true,
+              }),
+            });
+          }
+          if (draft.completed && canApproveTask(task)) {
+            return api(`/tasks/${task.id}/approve`, { method: 'POST' });
+          }
           const body = canEditProject
             ? {
                 title: draft.title.trim(),
@@ -411,6 +505,7 @@ export default function ProjectViewPage() {
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs uppercase tracking-[0.25em] text-slate-500">Status</p><p className="mt-2 text-lg font-semibold text-slate-950">{formatLabel(project?.projectStatus ? project.projectStatus : 'Not added')}</p></div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs uppercase tracking-[0.25em] text-slate-500">Due Date</p><p className="mt-2 text-lg font-semibold text-slate-950">{formatDate(project?.dueDate ? project.dueDate : 'Not added')}</p></div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs uppercase tracking-[0.25em] text-slate-500">Employees</p><p className="mt-2 text-lg font-semibold text-slate-950">{project?.assignedEmployees.length}</p></div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs uppercase tracking-[0.25em] text-slate-500">Tasks</p><p className="mt-2 text-lg font-semibold text-slate-950">{totalProjectTasks}</p></div>
             </div>
 
             <section className="mt-8 rounded-[26px] border border-slate-200 bg-slate-50 p-4 sm:p-5">
@@ -437,48 +532,115 @@ export default function ProjectViewPage() {
                   </button>
                 </div>
               </div>
+              <div className="mt-5">
+                <label className="block text-sm font-medium text-slate-700">Search Tasks</label>
+                <div className="relative mt-2">
+                  <input
+                    className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 pr-12 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400"
+                    onChange={(event) => setTaskSearch(event.target.value)}
+                    placeholder="Search task title, description, status, or assigned person"
+                    value={taskSearch}
+                  />
+                  {taskSearch ? (
+                    <button
+                      type="button"
+                      onClick={() => setTaskSearch('')}
+                      className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-sm font-bold text-slate-500 transition hover:bg-red-50 hover:text-red-600"
+                      aria-label="Clear task search"
+                    >
+                      x
+                    </button>
+                  ) : null}
+                </div>
+              </div>
               <div className="mt-5 space-y-4">
                 {visibleProjectTasks.length ? visibleProjectTasks.map((task) => {
                   const draft = getTaskDraft(task);
                   const canToggleStatus = canEditProject || canToggleTaskStatus(task);
-                  const canUploadProof = Boolean(task.requireProof && canToggleStatus);
                   const taskMedia = task.media || [];
+                  const hasProofMedia = taskMedia.length > 0;
+                  const canUploadProof = Boolean(task.requireProof && canToggleStatus && !hasProofMedia);
+                  const approveWaiting = isTaskApproveWaiting(task);
+                  const taskApproved = isTaskApproved(task);
+                  const showApproveButton = canApproveTask(task);
                   return (
                     <div key={task.id} className="rounded-[24px] border border-slate-200 bg-white p-4">
-                      <div className="grid gap-3 lg:grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-center">
-                        <label className="flex h-[56px] items-center justify-center rounded-[22px] border border-slate-200 bg-slate-50 px-4">
+                      <div className="grid gap-3 lg:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] lg:items-center">
+                        <label className="flex h-[56px] items-center justify-center gap-3 rounded-[22px] border border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-slate-700">
                           <input
                             type="checkbox"
                             className="h-4 w-4 rounded border-slate-300"
                             checked={draft.completed}
                             disabled={!canToggleStatus}
-                            onChange={() => updateTaskDraft(task.id, { completed: !draft.completed })}
+                            onChange={() => toggleTaskCompleted(task)}
                           />
                         </label>
-                        <input
-                          className="h-[56px] w-full rounded-[22px] border border-slate-200 bg-white px-6 text-base text-slate-900 outline-none"
-                          disabled={!canEditProject}
-                          value={draft.title}
-                          onChange={(event) => updateTaskDraft(task.id, { title: event.target.value })}
-                          placeholder="Task title"
-                        />
-                        <input
-                          className="h-[56px] w-full rounded-[22px] border border-slate-200 bg-white px-6 text-base text-slate-900 outline-none"
-                          disabled={!canEditProject}
-                          value={draft.description}
-                          onChange={(event) => updateTaskDraft(task.id, { description: event.target.value })}
-                          placeholder="Task description"
-                        />
+                        <div className="rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                          <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">Assigned To</p>
+                          <p className="mt-1 font-semibold text-slate-900">{getAssignedToLabel(task)}</p>
+                        </div>
+                        {approveWaiting ? (
+                          <div className="inline-flex h-[56px] items-center justify-center rounded-[22px] border border-amber-200 bg-amber-50 px-4 text-sm font-semibold text-amber-700">
+                            Approve Pending
+                          </div>
+                        ) : taskApproved || task.status === 'COMPLETED' ? (
+                          <div className="inline-flex h-[56px] items-center justify-center rounded-[22px] border border-emerald-200 bg-emerald-50 px-4 text-sm font-semibold text-emerald-700">
+                            Complete
+                          </div>
+                        ) : null}
+                        {showApproveButton ? (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              setUpdatingTasks(true);
+                              setError('');
+                              try {
+                                await api(`/tasks/${task.id}/approve`, { method: 'POST' });
+                                setSuccessMessage('Task approved successfully.');
+                                await loadData();
+                              } catch (approvalError) {
+                                setError(approvalError instanceof Error ? approvalError.message : 'Unable to approve task.');
+                              } finally {
+                                setUpdatingTasks(false);
+                              }
+                            }}
+                            disabled={updatingTasks}
+                            className="inline-flex h-[56px] items-center justify-center rounded-[22px] border border-[#7fb632] bg-[#8fc740] px-5 text-sm font-bold text-[#123b76] transition hover:bg-[#7fb632] disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {updatingTasks ? 'Approving...' : 'Approve'}
+                          </button>
+                        ) : null}
                         {canEditProject ? (
                           <button
                             type="button"
                             onClick={() => openRemoveConfirm(task)}
-                            className="inline-flex h-[56px] items-center justify-center gap-2 rounded-[22px] border border-red-200 bg-red-50 px-6 text-base font-medium text-red-600 transition hover:bg-red-100"
+                            className="inline-flex h-[56px] w-[56px] items-center justify-center rounded-[22px] border border-red-200 bg-red-50 text-red-600 transition hover:bg-red-100"
+                            aria-label={`Remove ${task.title}`}
                           >
-                            Remove
+                            <TrashIcon className="h-5 w-5" />
                           </button>
                         ) : null}
                       </div>
+                      <label className="mt-3 block">
+                        <span className="mb-2 block text-xs font-medium text-slate-700">Task Title <span className="text-red-500">*</span></span>
+                        <input
+                          className="min-h-[56px] w-full rounded-[22px] border border-slate-200 bg-white px-6 py-4 text-base text-slate-900 outline-none"
+                          disabled={!canEditProject}
+                          value={draft.title}
+                          onChange={(event) => updateTaskDraft(task, { title: event.target.value })}
+                          placeholder="Task title"
+                        />
+                      </label>
+                      <label className="mt-3 block">
+                        <span className="mb-2 block text-xs font-medium text-slate-700">Task Description <span className="text-red-500">*</span></span>
+                        <textarea
+                          className="min-h-[96px] w-full resize-y rounded-[22px] border border-slate-200 bg-white px-6 py-4 text-base text-slate-900 outline-none"
+                          disabled={!canEditProject}
+                          value={draft.description}
+                          onChange={(event) => updateTaskDraft(task, { description: event.target.value })}
+                          placeholder="Task description"
+                        />
+                      </label>
                       <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
                         <div>
                           <input
@@ -496,12 +658,27 @@ export default function ProjectViewPage() {
                             }}
                           />
                           <p className="mt-1 text-xs font-medium text-slate-500">
-                            {task.requireProof ? 'Proof file/photo required for this task.' : 'Proof file/photo not required for this task.'}
+                            {task.requireProof
+                              ? hasProofMedia
+                                ? 'Proof file/photo uploaded. Choose file disabled.'
+                                : 'Proof file/photo required. Upload first, then mark complete and update.'
+                              : 'Proof file/photo not required for this task.'}
                           </p>
                         </div>
-                        <span className="rounded-full bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600">
-                          {uploadingTaskId === task.id ? 'Uploading...' : `${taskMedia.length} file${taskMedia.length === 1 ? '' : 's'}`}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="rounded-full bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600">
+                            {uploadingTaskId === task.id ? 'Uploading...' : `${taskMedia.length} file${taskMedia.length === 1 ? '' : 's'}`}
+                          </span>
+                          {taskMedia.length ? (
+                            <button
+                              type="button"
+                              onClick={() => setPreviewMedia(taskMedia[0])}
+                              className="rounded-full bg-[#f1f8e8] px-3 py-2 text-xs font-semibold text-[#42601c] transition hover:bg-[#dff1c5]"
+                            >
+                              Preview
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                       {taskMedia.length ? (
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -520,6 +697,34 @@ export default function ProjectViewPage() {
                     </div>
                   );
                 }) : <EmptyState message={isAdmin ? 'No tasks added to this project yet.' : 'No assigned tasks found for you in this project.'} />}
+              </div>
+              <div className="mt-5 flex flex-col gap-3 border-t border-slate-200 pt-4 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+                <p>
+                  Showing {totalProjectTasks ? (taskPage - 1) * PROJECT_TASKS_PER_PAGE + 1 : 0}
+                  {' - '}
+                  {Math.min(taskPage * PROJECT_TASKS_PER_PAGE, totalProjectTasks)} of {totalProjectTasks} tasks
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTaskPage((current) => Math.max(1, current - 1))}
+                    disabled={taskPage <= 1}
+                    className="rounded-full border border-slate-300 bg-white px-4 py-2 font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                  >
+                    Previous
+                  </button>
+                  <span className="rounded-full bg-white px-4 py-2 font-semibold text-slate-700">
+                    Page {taskPage} / {totalTaskPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setTaskPage((current) => Math.min(totalTaskPages, current + 1))}
+                    disabled={taskPage >= totalTaskPages}
+                    className="rounded-full border border-slate-300 bg-white px-4 py-2 font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                  >
+                    Next
+                  </button>
+                </div>
               </div>
             </section>
 
@@ -613,6 +818,23 @@ export default function ProjectViewPage() {
                 {removingTaskId ? 'Submitting...' : 'Submit'}
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {proofPopupMessage ? (
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/35 px-4">
+          <div className="w-full max-w-md rounded-[28px] border border-amber-200 bg-white p-6 text-center shadow-[0_24px_70px_rgba(15,23,42,0.18)]">
+            <p className="text-sm font-medium uppercase tracking-[0.28em] text-amber-500">Proof Required</p>
+            <h2 className="mt-3 text-2xl font-semibold text-slate-950">Upload first</h2>
+            <p className="mt-3 text-sm leading-7 text-slate-600">{proofPopupMessage}</p>
+            <button
+              type="button"
+              onClick={() => setProofPopupMessage('')}
+              className="mt-6 inline-flex items-center justify-center rounded-2xl bg-[#8fc740] px-6 py-3 text-sm font-bold text-[#123b76] transition hover:bg-[#7fb337]"
+            >
+              Close
+            </button>
           </div>
         </div>
       ) : null}

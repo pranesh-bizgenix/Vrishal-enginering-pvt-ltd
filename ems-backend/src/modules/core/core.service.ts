@@ -47,7 +47,9 @@ type ListQueryOptions = {
   perPage?: number;
   search?: string;
   openOnly?: boolean;
+  dueDate?: string;
   employeeIds?: string[];
+  projectId?: string;
 };
 
 type UserRow = {
@@ -1088,7 +1090,7 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  private async buildProjectViews(projectRows?: ProjectRow[]) {
+  private async buildProjectViews(projectRows?: ProjectRow[], includeTasks = true) {
     await this.syncEmployeesFromDatabase();
     const projects = projectRows || (await this.fetchProjectRows());
     if (!projects.length) {
@@ -1098,13 +1100,15 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     const projectIds = projects.map((project) => project.id);
     const [assignmentRows, taskRows] = await Promise.all([
       this.fetchProjectAssignments(projectIds),
-      this.query<TaskRow>(
-        `SELECT id, title, description, type, status, project_id AS "projectId", due_date AS "dueDate", created_at AS "createdAt", created_by_employee_id AS "createdByEmployeeId", require_proof AS "requireProof", quality_rating AS "qualityRating", nc_items AS "ncItems"
-         FROM tasks
-         WHERE deleted_at IS NULL AND project_id = ANY($1::uuid[])
-         ORDER BY created_at DESC`,
-        [projectIds],
-      ),
+      includeTasks
+        ? this.query<TaskRow>(
+            `SELECT id, title, description, type, status, project_id AS "projectId", due_date AS "dueDate", created_at AS "createdAt", created_by_employee_id AS "createdByEmployeeId", require_proof AS "requireProof", quality_rating AS "qualityRating", nc_items AS "ncItems"
+             FROM tasks
+             WHERE deleted_at IS NULL AND project_id = ANY($1::uuid[])
+             ORDER BY created_at DESC`,
+            [projectIds],
+          )
+        : Promise.resolve([] as TaskRow[]),
     ]);
 
     const projectAssignments = new Map<string, string[]>();
@@ -1594,7 +1598,7 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
   private async fetchPaginatedTaskViews(
     scope: Set<string> | null,
     options: ListQueryOptions,
-    employeeId: string,
+    employeeId?: string,
   ) {
     await this.ensureTaskDetailColumns();
     const safePage = this.normalizePage(options.page);
@@ -1607,19 +1611,42 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     if (scope) {
       params.push(Array.from(scope));
       const scopeParam = `$${params.length}`;
-      params.push(employeeId);
-      const employeeParam = `$${params.length}`;
-      where.push(
-        `(t.created_by_employee_id = ${employeeParam}::uuid
-          OR EXISTS (
+      if (employeeId) {
+        params.push(employeeId);
+        const employeeParam = `$${params.length}`;
+        where.push(
+          `(t.created_by_employee_id = ${employeeParam}::uuid
+            OR EXISTS (
+              SELECT 1 FROM task_assignments scoped_ta
+              WHERE scoped_ta.task_id = t.id AND scoped_ta.employee_id = ANY(${scopeParam}::uuid[])
+            ))`,
+        );
+      } else {
+        where.push(
+          `EXISTS (
             SELECT 1 FROM task_assignments scoped_ta
             WHERE scoped_ta.task_id = t.id AND scoped_ta.employee_id = ANY(${scopeParam}::uuid[])
-          ))`,
-      );
+          )`,
+        );
+      }
     }
 
     if (options.openOnly) {
       where.push(`t.status <> 'COMPLETED'`);
+    }
+
+    if (options.dueDate) {
+      params.push(options.dueDate);
+      const dueDateParam = `$${params.length}`;
+      where.push(
+        `t.due_date IS NOT NULL AND to_char(t.due_date AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD') = ${dueDateParam}`,
+      );
+    }
+
+    if (options.projectId) {
+      params.push(options.projectId);
+      const projectParam = `$${params.length}`;
+      where.push(`t.project_id = ${projectParam}::uuid`);
     }
 
     if (search) {
@@ -1837,6 +1864,86 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
 
   private canCreateEditTeamRecords(employee: EmployeeRecord) {
     return this.getHighestRolePower(employee.roles) >= ROLE_POWER.LEADER;
+  }
+
+  private hasTaskPayloadField(
+    payload: Record<string, unknown>,
+    field: string,
+  ) {
+    return Object.prototype.hasOwnProperty.call(payload, field);
+  }
+
+  private isTaskMediaOnlyUpdate(payload: Record<string, unknown>) {
+    return (
+      this.hasTaskPayloadField(payload, 'media') &&
+      !this.hasTaskPayloadField(payload, 'title') &&
+      !this.hasTaskPayloadField(payload, 'description') &&
+      !this.hasTaskPayloadField(payload, 'type') &&
+      !this.hasTaskPayloadField(payload, 'projectId') &&
+      !this.hasTaskPayloadField(payload, 'dueDate') &&
+      !this.hasTaskPayloadField(payload, 'assignedEmployeeIds') &&
+      !this.hasTaskPayloadField(payload, 'requireProof') &&
+      !this.hasTaskPayloadField(payload, 'qualityRating') &&
+      !this.hasTaskPayloadField(payload, 'ncItems') &&
+      !this.hasTaskPayloadField(payload, 'status')
+    );
+  }
+
+  private isTaskStatusOnlyUpdate(payload: Record<string, unknown>) {
+    return (
+      this.hasTaskPayloadField(payload, 'status') &&
+      !this.hasTaskPayloadField(payload, 'title') &&
+      !this.hasTaskPayloadField(payload, 'description') &&
+      !this.hasTaskPayloadField(payload, 'type') &&
+      !this.hasTaskPayloadField(payload, 'projectId') &&
+      !this.hasTaskPayloadField(payload, 'dueDate') &&
+      !this.hasTaskPayloadField(payload, 'assignedEmployeeIds') &&
+      !this.hasTaskPayloadField(payload, 'requireProof') &&
+      !this.hasTaskPayloadField(payload, 'qualityRating') &&
+      !this.hasTaskPayloadField(payload, 'ncItems') &&
+      !this.hasTaskPayloadField(payload, 'media')
+    );
+  }
+
+  private isTaskDetailChangeRequested(payload: Record<string, unknown>) {
+    return (
+      this.hasTaskPayloadField(payload, 'title') ||
+      this.hasTaskPayloadField(payload, 'description') ||
+      this.hasTaskPayloadField(payload, 'type') ||
+      this.hasTaskPayloadField(payload, 'projectId') ||
+      this.hasTaskPayloadField(payload, 'dueDate') ||
+      this.hasTaskPayloadField(payload, 'assignedEmployeeIds') ||
+      this.hasTaskPayloadField(payload, 'requireProof') ||
+      this.hasTaskPayloadField(payload, 'qualityRating') ||
+      this.hasTaskPayloadField(payload, 'ncItems')
+    );
+  }
+
+  private getTaskUpdatePermissions(
+    currentEmployee: EmployeeRecord,
+    existing: TaskRow,
+    assignedEmployeeIds: string[],
+    payload: Record<string, unknown>,
+  ) {
+    const canEditTaskDetails =
+      this.canViewAllRecords(currentEmployee) ||
+      existing.createdByEmployeeId === currentEmployee.id ||
+      (!existing.createdByEmployeeId &&
+        this.canCreateEditTeamRecords(currentEmployee));
+    const isAssignedToTask = assignedEmployeeIds.includes(currentEmployee.id);
+    const canChangeTaskStatus = canEditTaskDetails || isAssignedToTask;
+    const statusOnlyUpdate = this.isTaskStatusOnlyUpdate(payload);
+
+    return {
+      canChangeTaskStatus,
+      canEditTaskDetails,
+      canUpdateCompletedTask:
+        currentEmployee.roles.includes('SA1') ||
+        (canChangeTaskStatus && statusOnlyUpdate),
+      detailChangeRequested: this.isTaskDetailChangeRequested(payload),
+      mediaOnlyUpdate: this.isTaskMediaOnlyUpdate(payload),
+      statusOnlyUpdate,
+    };
   }
 
   async login(email: string, password: string) {
@@ -2291,6 +2398,39 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     return visibleProjects;
   }
 
+  async getProjectById(
+    authorization: string | undefined,
+    projectId: string,
+    options?: { includeTasks?: boolean },
+  ) {
+    const currentEmployee = await this.getCurrentEmployee(authorization);
+    const projectRows = await this.fetchProjectRows([projectId]);
+    const project = projectRows[0];
+    if (!project) {
+      throw new NotFoundException('Project not found.');
+    }
+
+    const projectViews = await this.buildProjectViews(
+      projectRows,
+      options?.includeTasks ?? true,
+    );
+    const projectView = projectViews[0];
+    if (!projectView) {
+      throw new NotFoundException('Project not found.');
+    }
+
+    if (
+      !this.itemMatchesEmployeeScope(
+        projectView.assignedEmployeeIds,
+        this.getVisibleEmployeeScope(currentEmployee),
+      )
+    ) {
+      throw new UnauthorizedException('You do not have access to this project.');
+    }
+
+    return projectView;
+  }
+
   async createProject(
     authorization: string | undefined,
     payload: {
@@ -2457,9 +2597,18 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
   async getTasks(authorization?: string, options?: ListQueryOptions) {
     const employee = await this.getCurrentEmployee(authorization);
     const scope = this.getVisibleEmployeeScope(employee);
+    const hasRequestedEmployees = Boolean(options?.employeeIds?.length);
+    const requestedScope = this.getRequestedEmployeeScope(
+      scope,
+      options?.employeeIds,
+    );
 
     if (options?.page) {
-      return this.fetchPaginatedTaskViews(scope, options, employee.id);
+      return this.fetchPaginatedTaskViews(
+        requestedScope,
+        options,
+        hasRequestedEmployees ? undefined : employee.id,
+      );
     }
 
     const taskViews = await this.buildTaskViews();
@@ -2467,10 +2616,26 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     const search = options?.search?.trim().toLowerCase() || '';
     const visibleTasks = taskViews
       .filter((task) =>
-        this.taskMatchesEmployeeScope(task, scope, employee.id),
+        hasRequestedEmployees
+          ? this.itemMatchesEmployeeScope(task.assignedEmployeeIds, requestedScope)
+          : this.taskMatchesEmployeeScope(task, scope, employee.id),
       )
       .filter((task) => {
         if (options?.openOnly && task.status === 'COMPLETED') {
+          return false;
+        }
+
+        if (options?.dueDate) {
+          const taskDueDate = task.dueDate
+            ? new Date(task.dueDate)
+                .toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+            : '';
+          if (taskDueDate !== options.dueDate) {
+            return false;
+          }
+        }
+
+        if (options?.projectId && task.projectId !== options.projectId) {
           return false;
         }
 
@@ -2655,43 +2820,21 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     if (!projectRows[0]) {
       throw new NotFoundException('Project not found.');
     }
-    const mediaOnlyUpdate =
-      Object.prototype.hasOwnProperty.call(payload, 'media') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'title') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'description') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'type') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'projectId') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'dueDate') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'assignedEmployeeIds') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'requireProof') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'qualityRating') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'ncItems') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'status');
-    const statusOnlyUpdate =
-      Object.prototype.hasOwnProperty.call(payload, 'status') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'title') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'description') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'type') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'projectId') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'dueDate') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'assignedEmployeeIds') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'requireProof') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'qualityRating') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'ncItems') &&
-      !Object.prototype.hasOwnProperty.call(payload, 'media');
-    const canEditTaskDetails =
-      this.canViewAllRecords(currentEmployee) ||
-      existing.createdByEmployeeId === currentEmployee.id ||
-      (!existing.createdByEmployeeId &&
-        this.canCreateEditTeamRecords(currentEmployee));
     const existingAssignedEmployeeIds = (await this.fetchTaskAssignments([taskId])).map(
       (assignment) => assignment.employeeId,
     );
-    const isAssignedToTask = existingAssignedEmployeeIds.includes(currentEmployee.id);
-    const canChangeTaskStatus = canEditTaskDetails || isAssignedToTask;
-    const canUpdateCompletedTask =
-      currentEmployee.roles.includes('SA1') ||
-      (canChangeTaskStatus && statusOnlyUpdate);
+    const {
+      canChangeTaskStatus,
+      canEditTaskDetails,
+      canUpdateCompletedTask,
+      detailChangeRequested,
+      mediaOnlyUpdate,
+    } = this.getTaskUpdatePermissions(
+      currentEmployee,
+      existing,
+      existingAssignedEmployeeIds,
+      payload as Record<string, unknown>,
+    );
     if (
       existing.status === 'COMPLETED' &&
       !canUpdateCompletedTask &&
@@ -2708,16 +2851,6 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       throw new UnauthorizedException('Only the assigned-by user can change task status.');
     }
     if (!canEditTaskDetails) {
-      const detailChangeRequested =
-        Object.prototype.hasOwnProperty.call(payload, 'title') ||
-        Object.prototype.hasOwnProperty.call(payload, 'description') ||
-        Object.prototype.hasOwnProperty.call(payload, 'type') ||
-        Object.prototype.hasOwnProperty.call(payload, 'projectId') ||
-        Object.prototype.hasOwnProperty.call(payload, 'dueDate') ||
-        Object.prototype.hasOwnProperty.call(payload, 'assignedEmployeeIds') ||
-        Object.prototype.hasOwnProperty.call(payload, 'requireProof') ||
-        Object.prototype.hasOwnProperty.call(payload, 'qualityRating') ||
-        Object.prototype.hasOwnProperty.call(payload, 'ncItems');
       if (detailChangeRequested) {
         throw new UnauthorizedException(
           'Assigned users can only submit completion status and proof attachments.',
@@ -3156,39 +3289,66 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     const activeEmployees = Array.from(this.employees.values()).filter(
       (item) => item.active && this.itemMatchesEmployeeScope([item.id], scope),
     );
+    const visibleTaskStatusCounts = visibleTasks.reduce(
+      (counts, task) => {
+        if (task.status === 'PENDING') {
+          counts.pending += 1;
+        } else if (task.status === 'IN_PROGRESS') {
+          counts.inProgress += 1;
+        } else if (task.status === 'COMPLETED') {
+          counts.completed += 1;
+        }
+        return counts;
+      },
+      { pending: 0, inProgress: 0, completed: 0 },
+    );
+    const openTaskCountByProjectId = new Map<string, number>();
+    const employeeTasksById = new Map<string, typeof visibleTasks>();
+    for (const task of visibleTasks) {
+      if (task.status !== 'COMPLETED') {
+        openTaskCountByProjectId.set(
+          task.projectId,
+          (openTaskCountByProjectId.get(task.projectId) || 0) + 1,
+        );
+      }
+      for (const assignedEmployeeId of task.assignedEmployeeIds) {
+        const employeeTasks = employeeTasksById.get(assignedEmployeeId) || [];
+        employeeTasks.push(task);
+        employeeTasksById.set(assignedEmployeeId, employeeTasks);
+      }
+    }
+    const projectCountByEmployeeId = new Map<string, number>();
+    for (const project of visibleProjects) {
+      for (const assignedEmployeeId of project.assignedEmployeeIds) {
+        projectCountByEmployeeId.set(
+          assignedEmployeeId,
+          (projectCountByEmployeeId.get(assignedEmployeeId) || 0) + 1,
+        );
+      }
+    }
 
     return {
       generatedAt: new Date().toISOString(),
       activeProjects: visibleProjects.filter((project) => project.active)
         .length,
       stageBreakdown: {
-        pending: visibleTasks.filter((task) => task.status === 'PENDING')
-          .length,
-        inProgress: visibleTasks.filter((task) => task.status === 'IN_PROGRESS')
-          .length,
-        completed: visibleTasks.filter((task) => task.status === 'COMPLETED')
-          .length,
+        pending: visibleTaskStatusCounts.pending,
+        inProgress: visibleTaskStatusCounts.inProgress,
+        completed: visibleTaskStatusCounts.completed,
       },
       overdueProjects: overdueProjects.map((project) => ({
         id: project.id,
         name: project.name,
         dueDate: project.dueDate,
-        pendingTasks: visibleTasks.filter(
-          (task) =>
-            task.projectId === project.id && task.status !== 'COMPLETED',
-        ).length,
+        pendingTasks: openTaskCountByProjectId.get(project.id) || 0,
       })),
       employeeTaskBreakdown: activeEmployees.map((item) => {
-        const employeeTasks = visibleTasks.filter((task) =>
-          task.assignedEmployeeIds.includes(item.id),
-        );
+        const employeeTasks = employeeTasksById.get(item.id) || [];
         return {
           employeeId: item.id,
           employeeName: item.name,
           employeeEmail: item.email,
-          assignedProjects: visibleProjects.filter((project) =>
-            project.assignedEmployeeIds.includes(item.id),
-          ).length,
+          assignedProjects: projectCountByEmployeeId.get(item.id) || 0,
           assigned: employeeTasks.length,
           pending: employeeTasks.filter((task) => task.status === 'PENDING')
             .length,
@@ -3260,30 +3420,55 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     const activeEmployees = Array.from(this.employees.values()).filter(
       (item) => item.active && this.itemMatchesEmployeeScope([item.id], scope),
     );
+    const dailyTaskCounts = visibleTasks.reduce(
+      (counts, task) => {
+        if (task.status === 'COMPLETED') {
+          counts.completed += 1;
+        } else {
+          counts.pending += 1;
+          counts.pendingByProjectId.set(
+            task.projectId,
+            (counts.pendingByProjectId.get(task.projectId) || 0) + 1,
+          );
+        }
+
+        for (const assignedEmployeeId of task.assignedEmployeeIds) {
+          const employeeCounts = counts.byEmployeeId.get(assignedEmployeeId) || {
+            pending: 0,
+            completed: 0,
+          };
+          if (task.status === 'COMPLETED') {
+            employeeCounts.completed += 1;
+          } else {
+            employeeCounts.pending += 1;
+          }
+          counts.byEmployeeId.set(assignedEmployeeId, employeeCounts);
+        }
+
+        return counts;
+      },
+      {
+        pending: 0,
+        completed: 0,
+        pendingByProjectId: new Map<string, number>(),
+        byEmployeeId: new Map<string, { pending: number; completed: number }>(),
+      },
+    );
     return {
       generatedAt: new Date().toISOString(),
-      totalPendingTasks: visibleTasks.filter(
-        (task) => task.status !== 'COMPLETED',
-      ).length,
+      totalPendingTasks: dailyTaskCounts.pending,
       projects: visibleProjects.map((project) => ({
         projectId: project.id,
         projectName: project.name,
-        pendingTasks: visibleTasks.filter(
-          (task) =>
-            task.projectId === project.id && task.status !== 'COMPLETED',
-        ).length,
+        pendingTasks: dailyTaskCounts.pendingByProjectId.get(project.id) || 0,
       })),
       employeeTaskBreakdown: activeEmployees.map((item) => {
-        const employeeTasks = visibleTasks.filter((task) =>
-          task.assignedEmployeeIds.includes(item.id),
-        );
+        const employeeCounts = dailyTaskCounts.byEmployeeId.get(item.id);
         return {
           employeeId: item.id,
           employeeName: item.name,
-          pending: employeeTasks.filter((task) => task.status !== 'COMPLETED')
-            .length,
-          completed: employeeTasks.filter((task) => task.status === 'COMPLETED')
-            .length,
+          pending: employeeCounts?.pending || 0,
+          completed: employeeCounts?.completed || 0,
         };
       }),
     };
@@ -3423,6 +3608,15 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
         new Date(project.dueDate).getTime() < Date.now() &&
         project.active,
     );
+    const openTaskCountByProjectId = new Map<string, number>();
+    for (const task of visibleTaskViews) {
+      if (task.status !== 'COMPLETED') {
+        openTaskCountByProjectId.set(
+          task.projectId,
+          (openTaskCountByProjectId.get(task.projectId) || 0) + 1,
+        );
+      }
+    }
 
     return {
       employee,
@@ -3446,10 +3640,7 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       projectPendingSummary: visibleProjects.map((project) => ({
         projectId: project.id,
         projectName: project.name,
-        pendingTasks: visibleTaskViews.filter(
-          (task) =>
-            task.projectId === project.id && task.status !== 'COMPLETED',
-        ).length,
+        pendingTasks: openTaskCountByProjectId.get(project.id) || 0,
       })),
       recentNotifications: notificationLogsPage.items,
     };

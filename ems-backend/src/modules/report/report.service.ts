@@ -1,5 +1,6 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import type { QueryRunner } from 'typeorm';
 import {
   AppDataSource,
   ensureDataSourceInitialized,
@@ -8,7 +9,6 @@ import { CoreService } from '../core/core.service';
 import { WhatsappService } from './whatsapp.service';
 
 const ADMIN_REPORT_ROLES = ['SA1'];
-const ADMIN_REPORT_EMAILS = ['admin@sjsangath.com'];
 
 type MisSummary = {
   generatedAt: string;
@@ -141,7 +141,11 @@ export class ReportService implements OnModuleInit, OnModuleDestroy {
     const parts = this.getIndiaDateTimeParts();
 
     try {
-      if (parts.hour === 18 && parts.minute === 0) {
+      if (
+        parts.weekday !== 'Sun' &&
+        parts.hour === 18 &&
+        parts.minute === 0
+      ) {
         await this.runDailyPendingReport();
       }
 
@@ -190,10 +194,15 @@ export class ReportService implements OnModuleInit, OnModuleDestroy {
     return '';
   }
 
-  private async getRecipientPhonesByRoles(roles: string[], emails?: string[]) {
+  private async getRecipientPhonesByRoles(
+    roles: string[],
+    emails?: string[],
+    employeeIds?: string[],
+  ) {
     const normalizedEmails = (emails || [])
       .map((email) => email.trim().toLowerCase())
       .filter(Boolean);
+    const normalizedEmployeeIds = (employeeIds || []).filter(Boolean);
     const rows = await this.query<
       Array<{ phone: string | null }> extends (infer T)[] ? T : never
     >(
@@ -206,15 +215,23 @@ export class ReportService implements OnModuleInit, OnModuleDestroy {
          AND e.is_active = TRUE
          AND (
            (
+             COALESCE(array_length($3::uuid[], 1), 0) > 0
+             AND e.id = ANY($3::uuid[])
+           )
+           OR (
+             COALESCE(array_length($3::uuid[], 1), 0) = 0
+             AND
              COALESCE(array_length($2::varchar[], 1), 0) > 0
              AND LOWER(u.email) = ANY($2::varchar[])
            )
            OR (
+             COALESCE(array_length($3::uuid[], 1), 0) = 0
+             AND
              COALESCE(array_length($2::varchar[], 1), 0) = 0
              AND e.roles && $1::varchar[]
            )
          )`,
-      [roles, normalizedEmails],
+      [roles, normalizedEmails, normalizedEmployeeIds],
     );
 
     return Array.from(
@@ -263,6 +280,46 @@ export class ReportService implements OnModuleInit, OnModuleDestroy {
     );
 
     return Number(rows[0]?.count || '0') > 0;
+  }
+
+  private getAutomaticReportLockKey(
+    category: string,
+    startIso: string,
+    endIso: string,
+  ) {
+    return `${category}:${startIso}:${endIso}`;
+  }
+
+  private async acquireAutomaticReportLock(lockKey: string) {
+    await ensureDataSourceInitialized();
+    const queryRunner = AppDataSource.createQueryRunner();
+    await queryRunner.connect();
+
+    const rows = await queryRunner.query(
+      `SELECT pg_try_advisory_lock(hashtext($1)) AS locked`,
+      [lockKey],
+    );
+    const locked = rows[0]?.locked === true || rows[0]?.locked === 't';
+
+    if (!locked) {
+      await queryRunner.release();
+      return null;
+    }
+
+    return queryRunner;
+  }
+
+  private async releaseAutomaticReportLock(
+    queryRunner: QueryRunner,
+    lockKey: string,
+  ) {
+    try {
+      await queryRunner.query(`SELECT pg_advisory_unlock(hashtext($1))`, [
+        lockKey,
+      ]);
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   private getDayPeriod(value = new Date()): ReportPeriod {
@@ -1164,10 +1221,12 @@ export class ReportService implements OnModuleInit, OnModuleDestroy {
     parameters: string[],
     logMessage: string,
     recipientEmails?: string[],
+    recipientEmployeeIds?: string[],
   ) {
     const recipients = await this.getRecipientPhonesByRoles(
       recipientRoles,
       recipientEmails,
+      recipientEmployeeIds,
     );
     const delivery = await this.whatsappService.sendTemplate(recipients, {
       name: templateName,
@@ -1193,10 +1252,12 @@ export class ReportService implements OnModuleInit, OnModuleDestroy {
     document: { filename: string; buffer: Buffer; mimeType?: string },
     logMessage: string,
     recipientEmails?: string[],
+    recipientEmployeeIds?: string[],
   ) {
     const recipients = await this.getRecipientPhonesByRoles(
       recipientRoles,
       recipientEmails,
+      recipientEmployeeIds,
     );
     const delivery = await this.whatsappService.sendDocumentTemplate(
       recipients,
@@ -1245,117 +1306,141 @@ export class ReportService implements OnModuleInit, OnModuleDestroy {
     const { start, end } = this.getDayPeriod(now);
     const weeklyPeriod = this.getWeekToDatePeriod(now);
     const category = 'Weekly MIS Auto';
+    const startIso = start.toISOString();
+    const endIso = end.toISOString();
+    const lockKey = this.getAutomaticReportLockKey(category, startIso, endIso);
+    const lockRunner = force
+      ? null
+      : await this.acquireAutomaticReportLock(lockKey);
 
-    if (
-      !force &&
-      (await this.hasLogForWindow(
-        category,
-        start.toISOString(),
-        end.toISOString(),
-      ))
-    ) {
+    if (!force && !lockRunner) {
       return { success: true, skipped: true };
     }
 
-    const weeklyMis = await this.buildMisSummary(weeklyPeriod);
-    const delivery = await this.dispatchWhatsappTemplateReport(
-      category,
-      ADMIN_REPORT_ROLES,
-      'weekly_mis_reports',
-      [
-        String(weeklyMis.activeProjects),
-        this.buildMisEmployeeTaskTemplateValue(weeklyMis),
-        this.buildMisOverdueProjectTemplateValue(weeklyMis),
-      ],
-      this.buildMisWhatsappMessage(weeklyMis),
-      ADMIN_REPORT_EMAILS,
-    );
+    try {
+      if (!force && (await this.hasLogForWindow(category, startIso, endIso))) {
+        return { success: true, skipped: true };
+      }
 
-    return {
-      success: delivery.status === 'SENT',
-      skipped: false,
-      weeklyMis,
-      delivery,
-    };
+      const weeklyMis = await this.buildMisSummary(weeklyPeriod);
+      const delivery = await this.dispatchWhatsappTemplateReport(
+        category,
+        ADMIN_REPORT_ROLES,
+        'weekly_mis_reports',
+        [
+          String(weeklyMis.activeProjects),
+          this.buildMisEmployeeTaskTemplateValue(weeklyMis),
+          this.buildMisOverdueProjectTemplateValue(weeklyMis),
+        ],
+        this.buildMisWhatsappMessage(weeklyMis),
+      );
+
+      return {
+        success: delivery.status === 'SENT',
+        skipped: false,
+        weeklyMis,
+        delivery,
+      };
+    } finally {
+      if (lockRunner) {
+        await this.releaseAutomaticReportLock(lockRunner, lockKey);
+      }
+    }
   }
 
   async runMonthlyReport(force = false) {
     const now = new Date();
     const { start, end } = this.getMonthToDatePeriod(now);
     const category = 'Monthly TMS Auto';
+    const startIso = start.toISOString();
+    const endIso = end.toISOString();
+    const lockKey = this.getAutomaticReportLockKey(category, startIso, endIso);
+    const lockRunner = force
+      ? null
+      : await this.acquireAutomaticReportLock(lockKey);
 
-    if (
-      !force &&
-      (await this.hasLogForWindow(
-        category,
-        start.toISOString(),
-        end.toISOString(),
-      ))
-    ) {
+    if (!force && !lockRunner) {
       return { success: true, skipped: true };
     }
 
-    const monthlyReport = await this.buildMonthlyReportSummary();
-    const monthlyPdf = this.buildMonthlyReportPdf(monthlyReport);
-    const delivery = await this.dispatchWhatsappDocumentTemplateReport(
-      category,
-      ADMIN_REPORT_ROLES,
-      'monthly_tms_report',
-      [monthlyReport.month],
-      {
-        filename: `monthly-tms-report-${monthlyReport.month}.pdf`,
-        buffer: monthlyPdf,
-        mimeType: 'application/pdf',
-      },
-      this.buildMonthlyWhatsappMessage(monthlyReport),
-      ADMIN_REPORT_EMAILS,
-    );
+    try {
+      if (!force && (await this.hasLogForWindow(category, startIso, endIso))) {
+        return { success: true, skipped: true };
+      }
 
-    return {
-      success: delivery.status === 'SENT',
-      skipped: false,
-      monthlyReport,
-      delivery,
-    };
+      const monthlyReport = await this.buildMonthlyReportSummary();
+      const monthlyPdf = this.buildMonthlyReportPdf(monthlyReport);
+      const delivery = await this.dispatchWhatsappDocumentTemplateReport(
+        category,
+        ADMIN_REPORT_ROLES,
+        'monthly_tms_report',
+        [monthlyReport.month],
+        {
+          filename: `monthly-tms-report-${monthlyReport.month}.pdf`,
+          buffer: monthlyPdf,
+          mimeType: 'application/pdf',
+        },
+        this.buildMonthlyWhatsappMessage(monthlyReport),
+      );
+
+      return {
+        success: delivery.status === 'SENT',
+        skipped: false,
+        monthlyReport,
+        delivery,
+      };
+    } finally {
+      if (lockRunner) {
+        await this.releaseAutomaticReportLock(lockRunner, lockKey);
+      }
+    }
   }
 
   async runDailyPendingReport(force = false) {
     const now = new Date();
     const { start, end } = this.getDayPeriod(now);
     const category = 'Daily Pending Auto';
+    const startIso = start.toISOString();
+    const endIso = end.toISOString();
+    const lockKey = this.getAutomaticReportLockKey(category, startIso, endIso);
+    const lockRunner = force
+      ? null
+      : await this.acquireAutomaticReportLock(lockKey);
 
-    if (
-      !force &&
-      (await this.hasLogForWindow(
-        category,
-        start.toISOString(),
-        end.toISOString(),
-      ))
-    ) {
+    if (!force && !lockRunner) {
       return { success: true, skipped: true };
     }
 
-    const dailyPending = await this.buildDailySummary({ start, end });
-    const [delivery] = await Promise.all([
-      this.dispatchWhatsappTemplateReport(
-        category,
-        ADMIN_REPORT_ROLES,
-        'daily_pending_summarys',
-        [
-          String(dailyPending.totalPendingTasks),
-          `${this.buildDailyProjectTemplateValue(dailyPending)} | Employee-wise: ${this.buildDailyEmployeeTaskTemplateValue(dailyPending)}`,
-        ],
-        this.buildDailyWhatsappMessage(dailyPending),
-        ADMIN_REPORT_EMAILS,
-      ),
-    ]);
+    try {
+      if (!force && (await this.hasLogForWindow(category, startIso, endIso))) {
+        return { success: true, skipped: true };
+      }
 
-    return {
-      success: delivery.status === 'SENT',
-      skipped: false,
-      dailyPending,
-      delivery,
-    };
+      const dailyPending = await this.buildDailySummary({ start, end });
+      const [delivery] = await Promise.all([
+        this.dispatchWhatsappTemplateReport(
+          category,
+          ADMIN_REPORT_ROLES,
+          'daily_pending_summarys',
+          [
+            String(dailyPending.totalPendingTasks),
+            `${this.buildDailyProjectTemplateValue(dailyPending)} | Employee-wise: ${this.buildDailyEmployeeTaskTemplateValue(dailyPending)}`,
+          ],
+          this.buildDailyWhatsappMessage(dailyPending),
+        ),
+      ]);
+
+      return {
+        success: delivery.status === 'SENT',
+        skipped: false,
+        dailyPending,
+        delivery,
+      };
+    } finally {
+      if (lockRunner) {
+        await this.releaseAutomaticReportLock(lockRunner, lockKey);
+      }
+    }
   }
 
   // async runWesakEventInvite() {
@@ -1375,6 +1460,7 @@ export class ReportService implements OnModuleInit, OnModuleDestroy {
       (role) => role === 'SA1' || role === 'SA2',
     );
     const manualReportEmails = [currentEmployee.email].filter(Boolean);
+    const manualReportEmployeeIds = [currentEmployee.id].filter(Boolean);
 
     const now = new Date();
     const [weeklyMis, dailyPending, monthlyReport] = await Promise.all([
@@ -1400,6 +1486,7 @@ export class ReportService implements OnModuleInit, OnModuleDestroy {
         ],
         this.buildMisWhatsappMessage(weeklyMis),
         manualReportEmails,
+        manualReportEmployeeIds,
       ),
       this.dispatchWhatsappTemplateReport(
         'Daily Pending Manual',
@@ -1411,6 +1498,7 @@ export class ReportService implements OnModuleInit, OnModuleDestroy {
         ],
         this.buildDailyWhatsappMessage(dailyPending),
         manualReportEmails,
+        manualReportEmployeeIds,
       ),
       this.dispatchWhatsappDocumentTemplateReport(
         'Monthly TMS Manual',
@@ -1424,6 +1512,7 @@ export class ReportService implements OnModuleInit, OnModuleDestroy {
         },
         this.buildMonthlyWhatsappMessage(monthlyReport),
         manualReportEmails,
+        manualReportEmployeeIds,
       ),
     ]);
 

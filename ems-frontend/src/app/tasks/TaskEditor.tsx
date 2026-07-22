@@ -98,6 +98,26 @@ function formatNoteDate(value: string) {
   });
 }
 
+function formatKolkataDateTimeInput(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const getPart = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value || '';
+
+  return `${getPart('year')}-${getPart('month')}-${getPart('day')}T${getPart('hour')}:${getPart('minute')}`;
+}
+
 const TASK_DESCRIPTION_NOTE_PREFIX = 'TASK_DESCRIPTION -';
 
 function isTaskDescriptionNote(message: string) {
@@ -150,10 +170,11 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
       setProjects(projectData);
 
       if (mode === 'edit' && taskData) {
+        const formattedTaskDueDate = taskData.dueDate ? formatKolkataDateTimeInput(taskData.dueDate) : '';
         setCurrentTask(taskData);
         setTaskForm({
           projectId: taskData.projectId,
-          dueDate: taskData.dueDate ? taskData.dueDate.slice(0, 16) : '',
+          dueDate: formattedTaskDueDate,
           type: taskData.type,
           status: taskData.status,
           requireProof: Boolean(taskData.requireProof),
@@ -164,7 +185,7 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
             id: taskData.id,
             title: taskData.title,
             description: taskData.description,
-            dueDate: '',
+            dueDate: formattedTaskDueDate,
             requireProof: Boolean(taskData.requireProof),
             qualityRating: taskData.qualityRating || '',
             ncItems: taskData.ncItems?.length ? taskData.ncItems : [],
@@ -341,6 +362,14 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
     setTaskItems((current) => current.map((item) => (item.id === itemId ? { ...item, [field]: value } : item)));
   }
 
+  function updateDefaultDueDate(value: string) {
+    setTaskForm((current) => ({ ...current, dueDate: value }));
+
+    if (mode === 'edit') {
+      setTaskItems((current) => current.map((item, index) => (index === 0 ? { ...item, dueDate: value } : item)));
+    }
+  }
+
   function updateTaskItemProofRequired(itemId: string, requireProof: boolean) {
     setTaskItems((current) => current.map((item) => (item.id === itemId ? { ...item, requireProof } : item)));
   }
@@ -348,6 +377,10 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
   function addNcItem(itemId: string) {
     setTaskItems((current) => current.map((item) => (item.id === itemId ? { ...item, ncItems: [...item.ncItems, ''] } : item)));
   }
+
+  function formatDateTime(value: string | null) {
+  return value ? new Date(value).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'Not set';
+}
 
   function updateNcItem(itemId: string, ncIndex: number, value: string) {
     setTaskItems((current) =>
@@ -671,10 +704,10 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
 
 
                 <div className="space-y-2">
-                  <label className="block text-sm font-medium text-slate-700">Default Due Date *</label>
+                  <label className="block text-sm font-medium text-slate-700">Default Due Date <span className="text-red-500">*</span></label>
                   <input
                     className="h-11 w-full rounded-xl border border-emerald-100 bg-white px-4 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
-                    onChange={(event) => setTaskForm({ ...taskForm, dueDate: event.target.value })}
+                    onChange={(event) => updateDefaultDueDate(event.target.value)}
                     disabled={taskDetailsLocked}
                     type="datetime-local"
                     value={taskForm.dueDate}
@@ -684,7 +717,7 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
               </div>
 
               {!isAssignedSubmitOnly ? <div className="rounded-[26px] border border-[#d8ecbb] bg-[#f8fcf1] p-4 sm:p-5">
-                <p className="text-sm font-medium text-slate-700">Assign Employees *</p>
+                <p className="text-sm font-medium text-slate-700">Assign Employees <span className="text-red-500">*</span></p>
                 <div className="relative mt-4" ref={employeesDropdownRef}>
                   <button
                     type="button"
@@ -773,8 +806,14 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
                           />
                           <span>Require proof file/photo when assigned user marks done.</span>
                         </label>
-                      <input className={fieldClassName} value={item.title} onChange={(event) => updateTaskItem(item.id, 'title', event.target.value)} disabled={taskDetailsLocked} placeholder={mode === 'edit' && index === 0 ? 'Enter task title' : `Enter task ${index + 1} title`} />
-                      <input className={fieldClassName} value={item.description} onChange={(event) => updateTaskItem(item.id, 'description', event.target.value)} disabled={taskDetailsLocked} placeholder={mode === 'edit' && index === 0 ? 'Enter task description' : `Enter task ${index + 1} description`} />
+                      <label className="block">
+                        <span className="block text-sm font-medium text-slate-700">Task Title <span className="text-red-500">*</span></span>
+                        <input className={fieldClassName} value={item.title} onChange={(event) => updateTaskItem(item.id, 'title', event.target.value)} disabled={taskDetailsLocked} placeholder={mode === 'edit' && index === 0 ? 'Enter task title' : `Enter task ${index + 1} title`} />
+                      </label>
+                      <label className="block">
+                        <span className="block text-sm font-medium text-slate-700">Task Description</span>
+                        <input className={fieldClassName} value={item.description} onChange={(event) => updateTaskItem(item.id, 'description', event.target.value)} disabled={taskDetailsLocked} placeholder={mode === 'edit' && index === 0 ? 'Enter task description' : `Enter task ${index + 1} description`} />
+                      </label>
                       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                         <input
                           className="h-[50px] rounded-2xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
@@ -951,7 +990,23 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
                       {taskDescriptionNotes.length} description{taskDescriptionNotes.length === 1 ? '' : 's'}
                     </span>
                   </div>
-
+                    <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+                    <textarea
+                      className="min-h-[96px] w-full resize-y rounded-2xl border border-emerald-100 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5]"
+                      onChange={(event) => setNoteMessage(event.target.value)}
+                      placeholder="Add description note"
+                      disabled={!canAddTaskDescriptionDiscussion}
+                      value={noteMessage}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void submitTaskNote()}
+                      disabled={sendingNote || !noteMessage.trim() || !canAddTaskDescriptionDiscussion}
+                      className="inline-flex min-h-[48px] items-center justify-center rounded-2xl bg-[#8fc740] px-6 py-3 text-sm font-bold text-[#123b76] shadow-[0_14px_28px_rgba(143,199,64,0.22)] transition hover:bg-[#7fb337] disabled:cursor-not-allowed disabled:opacity-60 sm:self-end"
+                    >
+                      {sendingNote ? 'Adding...' : 'Add Description'}
+                    </button>
+                  </div>
                   <div className="mt-5 max-h-[420px] space-y-3 overflow-y-auto rounded-3xl border border-[#d8ecbb] bg-white p-3 sm:p-4">
                     {taskDescriptionNotes.length ? (
                       [...taskDescriptionNotes]
@@ -982,24 +1037,6 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
                         No task descriptions added yet.
                       </div>
                     )}
-                  </div>
-
-                  <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
-                    <textarea
-                      className="min-h-[96px] w-full resize-y rounded-2xl border border-emerald-100 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[#8fc740] focus:ring-2 focus:ring-[#dff1c5]"
-                      onChange={(event) => setNoteMessage(event.target.value)}
-                      placeholder="Add description note"
-                      disabled={!canAddTaskDescriptionDiscussion}
-                      value={noteMessage}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void submitTaskNote()}
-                      disabled={sendingNote || !noteMessage.trim() || !canAddTaskDescriptionDiscussion}
-                      className="inline-flex min-h-[48px] items-center justify-center rounded-2xl bg-[#8fc740] px-6 py-3 text-sm font-bold text-[#123b76] shadow-[0_14px_28px_rgba(143,199,64,0.22)] transition hover:bg-[#7fb337] disabled:cursor-not-allowed disabled:opacity-60 sm:self-end"
-                    >
-                      {sendingNote ? 'Adding...' : 'Add Description'}
-                    </button>
                   </div>
                 </div>
               ) : null}

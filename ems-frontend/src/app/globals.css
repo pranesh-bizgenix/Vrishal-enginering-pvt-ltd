@@ -111,6 +111,28 @@ table {
   border-collapse: separate;
   border-spacing: 0;
   min-width: max-content;
+  max-width: none;
+}
+
+div[class*='overflow-x-auto'] {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto !important;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+div[class*='overflow-x-auto'] > table {
+  width: 100%;
+  min-width: max(760px, 100%);
+}
+
+div[class*='overflow-x-auto'] th,
+div[class*='overflow-x-auto'] td {
+  vertical-align: middle;
 }
 
 thead[class*='bg-slate-50'],
@@ -427,12 +449,25 @@ a[class*='border-slate-300'] {
     margin-right: -0.85rem;
     padding-left: 0.85rem;
     padding-right: 0.85rem;
+    padding-bottom: 0.5rem;
+    max-width: calc(100% + 1.7rem);
+    overflow-x: auto !important;
     scrollbar-width: thin;
+  }
+
+  div[class*='overflow-x-auto'] > table {
+    min-width: 720px;
   }
 
   th,
   td {
     white-space: nowrap;
+  }
+
+  div[class*='overflow-x-auto'] th,
+  div[class*='overflow-x-auto'] td {
+    padding-left: 0.85rem !important;
+    padding-right: 0.85rem !important;
   }
 
   button[class*='px-10'],

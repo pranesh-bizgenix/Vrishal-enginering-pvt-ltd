@@ -30,10 +30,12 @@ const projectFormInitial = {
   assignedEmployeeIds: [] as string[],
 };
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children, required = false }: { label: string; children: React.ReactNode; required?: boolean }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-sm font-medium text-slate-700">{label}</span>
+      <span className="mb-2 block text-sm font-medium text-slate-700">
+        {label}{required ? <span className="text-red-500"> *</span> : null}
+      </span>
       {children}
     </label>
   );
@@ -184,7 +186,7 @@ export default function NewProjectPage() {
               </div>
               {!canCreateProject ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">Only SA1 can create projects.</div> : null}
               <div className="grid gap-4 md:grid-cols-2">
-              <Field label="Project Name">
+              <Field label="Project Name" required>
                 <input className={fieldClassName} onChange={(event) => setProjectForm({ ...projectForm, name: event.target.value })} placeholder="Project name" required value={projectForm.name} />
               </Field>
               <Field label="Project Type">
@@ -194,7 +196,7 @@ export default function NewProjectPage() {
                 <textarea className={`${fieldClassName} min-h-20 resize-y`} onChange={(event) => setProjectForm({ ...projectForm, description: event.target.value })} placeholder="Description" value={projectForm.description} />
               </Field>
               <div className="rounded-[26px] border border-slate-200 bg-slate-50 p-4 sm:p-4">
-                <p className="text-sm font-medium text-slate-700">Assign Employees</p>
+                <p className="text-sm font-medium text-slate-700">Assign Employees <span className="text-red-500">*</span></p>
                 <div className="relative mt-4" ref={employeeDropdownRef}>
                   <button
                     type="button"
@@ -234,7 +236,7 @@ export default function NewProjectPage() {
                   ))}
                 </select>
               </Field>
-              <Field label="Project Due Date">
+              <Field label="Project Due Date" required>
                 <input className={fieldClassName} onChange={(event) => setProjectForm({ ...projectForm, dueDate: event.target.value })} type="datetime-local" value={projectForm.dueDate} />
               </Field>
               </div>

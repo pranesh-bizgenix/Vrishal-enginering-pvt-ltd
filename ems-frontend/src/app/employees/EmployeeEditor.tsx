@@ -93,10 +93,12 @@ function formatRoleLabel(role: Role) {
   return formatRoleName(role);
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, children, required = false }: { label: string; children: ReactNode; required?: boolean }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-sm font-medium text-slate-700">{label}</span>
+      <span className="mb-2 block text-sm font-medium text-slate-700">
+        {label}{required ? <span className="text-red-500"> *</span> : null}
+      </span>
       {children}
     </label>
   );
@@ -355,7 +357,7 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
             </div>
 
               <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Employee Name">
+                <Field label="Employee Name" required>
                   <input
                     className={fieldClassName}
                     disabled={!canEditEmployee}
@@ -365,7 +367,7 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
                   />
                 </Field>
                 <div className="relative" ref={rolesDropdownRef}>
-                  <Field label="Assign Roles">
+                  <Field label="Assign Roles" required>
                     <button
                       aria-expanded={rolesOpen}
                       className={`${fieldClassName} flex items-center justify-between gap-3 pr-12 text-left`}
@@ -452,7 +454,7 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
 
                 {form.loginEnabled ? (
                   <div className="grid gap-4 md:grid-cols-2">
-                    <Field label="Login Email">
+                    <Field label="Login Email" required={form.loginEnabled}>
                       <input
                         type="email"
                         value={form.loginEmail}
@@ -463,7 +465,7 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
                         placeholder="Enter email"
                       />
                     </Field>
-                    <Field label={mode === 'create' ? 'Login Password' : 'Reset Password'}>
+                    <Field label={mode === 'create' ? 'Login Password' : 'Reset Password'} required={mode === 'create' && form.loginEnabled && !form.password.trim()}>
                       <input
                         type="password"
                         value={form.loginPassword}

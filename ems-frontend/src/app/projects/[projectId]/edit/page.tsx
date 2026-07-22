@@ -30,10 +30,12 @@ const projectFormInitial = {
   assignedEmployeeIds: [] as string[],
 };
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, children, required = false }: { label: string; children: ReactNode; required?: boolean }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-sm font-medium text-slate-700">{label}</span>
+      <span className="mb-2 block text-sm font-medium text-slate-700">
+        {label}{required ? <span className="text-red-500"> *</span> : null}
+      </span>
       {children}
     </label>
   );
@@ -88,25 +90,19 @@ export default function EditProjectPage() {
       const [dashboardData, employeeData, projectData] = await Promise.all([
         api<DashboardResponse>('/dashboard'),
         api<Employee[]>('/employees'),
-        api<Project[]>('/projects'),
+        api<Project>(`/projects/${projectId}`),
       ]);
 
       setDashboard(dashboardData);
       setEmployees(employeeData);
 
-      const currentProject = projectData.find((project) => project.id === projectId);
-      if (!currentProject) {
-        setError('Project not found.');
-        return;
-      }
-
       setProjectForm({
-        name: currentProject.name || '',
-        projectType: currentProject.projectType || '',
-        description: currentProject.description || '',
-        dueDate: formatDateTimeLocalInIndia(currentProject.dueDate),
-        projectStatus: currentProject.projectStatus || 'NOT_STARTED',
-        assignedEmployeeIds: currentProject.assignedEmployeeIds || [],
+        name: projectData.name || '',
+        projectType: projectData.projectType || '',
+        description: projectData.description || '',
+        dueDate: formatDateTimeLocalInIndia(projectData.dueDate),
+        projectStatus: projectData.projectStatus || 'NOT_STARTED',
+        assignedEmployeeIds: projectData.assignedEmployeeIds || [],
       });
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : 'Unable to load project form.';
@@ -249,7 +245,7 @@ export default function EditProjectPage() {
                 </div>
               </div>
               <div className="grid gap-4 md:grid-cols-2">
-              <Field label="Project Name">
+              <Field label="Project Name" required>
                 <input className={fieldClassName} disabled={!canEditProject} onChange={(event) => setProjectForm({ ...projectForm, name: event.target.value })} placeholder="Project name" required value={projectForm.name} />
               </Field>
               <Field label="Project Type">
@@ -260,7 +256,7 @@ export default function EditProjectPage() {
               </Field>
               <div className="rounded-[26px] border border-slate-200 bg-slate-50 p-4 sm:p-5">
                 <div className="flex flex-col gap-2">
-                  <p className="text-sm font-medium text-slate-700">Assign Employees</p>
+                  <p className="text-sm font-medium text-slate-700">Assign Employees <span className="text-red-500">*</span></p>
                   <p className="text-xs text-slate-500">Inactive employees stay visible for old project history, but cannot be newly assigned.</p>
                 </div>
                 <div className="relative mt-4" ref={employeeDropdownRef}>
@@ -320,7 +316,7 @@ export default function EditProjectPage() {
                   ))}
                 </select>
               </Field>
-              <Field label="Due Date">
+              <Field label="Due Date" required>
                 <input className={fieldClassName} disabled={!canEditProject} onChange={(event) => setProjectForm({ ...projectForm, dueDate: event.target.value })} type="datetime-local" value={projectForm.dueDate} />
               </Field>
               </div>

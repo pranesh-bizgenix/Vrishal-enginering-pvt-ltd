@@ -1,10 +1,14 @@
 import { NestFactory } from '@nestjs/core';
 import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
-import { ensureDataSourceInitialized } from './database/data-source';
+import {
+  ensureDataSourceInitialized,
+  ensurePerformanceIndexes,
+} from './database/data-source';
 
 async function bootstrap() {
   await ensureDataSourceInitialized();
+  await ensurePerformanceIndexes();
   const app = await NestFactory.create(AppModule);
   app.use(json({ limit: process.env.REQUEST_BODY_LIMIT || '100mb' }));
   app.use(

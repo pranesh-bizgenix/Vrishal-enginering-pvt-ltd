@@ -106,6 +106,7 @@ export default function TasksPage() {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(25);
   const [serverSearch, setServerSearch] = useState('');
+  const [serverDueDate, setServerDueDate] = useState('');
   const [totalTasks, setTotalTasks] = useState(0);
   const [filters, setFilters] = useState<TaskFilters>({
     project: '',
@@ -127,6 +128,9 @@ export default function TasksPage() {
       if (serverSearch.trim()) {
         query.set('search', serverSearch.trim());
       }
+      if (serverDueDate) {
+        query.set('dueDate', serverDueDate);
+      }
       const [dashboardData, taskData, employeeData] = await Promise.all([
         api<DashboardResponse>('/dashboard'),
         api<PaginatedResponse<Task>>(`/tasks?${query.toString()}`),
@@ -146,7 +150,7 @@ export default function TasksPage() {
     } finally {
       setBusy(false);
     }
-  }, [page, perPage, router, serverSearch]);
+  }, [page, perPage, router, serverDueDate, serverSearch]);
 
   useEffect(() => {
     if (!getToken()) {
@@ -408,18 +412,26 @@ export default function TasksPage() {
   }
 
   function updateFilter<Key extends keyof TaskFilters>(key: Key, value: TaskFilters[Key]) {
+    if (key === 'timelineMode' || key === 'timelineValue') {
+      setServerDueDate('');
+    }
     setFilters((current) => ({ ...current, [key]: value }));
   }
 
   function resetFilters() {
+    setPage(1);
+    setServerDueDate('');
     setFilters({ project: '', assignee: '', timelineMode: 'month', timelineValue: '', type: '', status: '' });
   }
 
   function showTodayWorkTasks() {
+    const today = getTodayDateValue();
+    setPage(1);
+    setServerDueDate(today);
     setFilters((current) => ({
       ...current,
       timelineMode: 'day',
-      timelineValue: getTodayDateValue(),
+      timelineValue: today,
     }));
   }
 
@@ -529,15 +541,30 @@ export default function TasksPage() {
             </div>
 
             <div className="mt-6 flex flex-col gap-3 rounded-[24px] border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
-              <input
-                className="h-11 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#8fc740] focus:ring-2 focus:ring-[#8fc740]/20 sm:max-w-md"
-                onChange={(event) => {
-                  setPage(1);
-                  setServerSearch(event.target.value);
-                }}
-                placeholder="Search tasks, project, assignee, status"
-                value={serverSearch}
-              />
+              <div className="relative w-full sm:max-w-md">
+                <input
+                  className="h-11 w-full rounded-xl border border-slate-300 bg-white px-4 pr-12 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#8fc740] focus:ring-2 focus:ring-[#8fc740]/20"
+                  onChange={(event) => {
+                    setPage(1);
+                    setServerSearch(event.target.value);
+                  }}
+                  placeholder="Search tasks, project, assignee, status"
+                  value={serverSearch}
+                />
+                {serverSearch ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPage(1);
+                      setServerSearch('');
+                    }}
+                    className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-sm font-bold text-slate-500 transition hover:bg-red-50 hover:text-red-600"
+                    aria-label="Clear task search"
+                  >
+                    x
+                  </button>
+                ) : null}
+              </div>
             </div>
 
             <div className="mt-6 rounded-[24px] border border-slate-200 bg-slate-50 p-4 sm:p-5">
@@ -570,7 +597,10 @@ export default function TasksPage() {
                 </select>
                 <select
                   className={filterFieldClassName}
-                  onChange={(event) => setFilters((current) => ({ ...current, timelineMode: event.target.value as TaskFilters['timelineMode'], timelineValue: '' }))}
+                  onChange={(event) => {
+                    setServerDueDate('');
+                    setFilters((current) => ({ ...current, timelineMode: event.target.value as TaskFilters['timelineMode'], timelineValue: '' }));
+                  }}
                   value={filters.timelineMode}
                 >
                   <option value="day">Day</option>

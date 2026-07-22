@@ -21,6 +21,9 @@ export class TaskService {
       perPage?: number;
       search?: string;
       openOnly?: boolean;
+      dueDate?: string;
+      employeeIds?: string[];
+      projectId?: string;
     },
   ) {
     return this.emsService.getTasks(authorization, options);

@@ -287,18 +287,88 @@ export default function ProjectsPage() {
             </div>
             <div className="mt-6">
               <div className="mb-4 flex flex-col gap-3 rounded-[24px] border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <input
-                  className="h-11 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#8fc740] focus:ring-2 focus:ring-[#8fc740]/20 sm:max-w-md"
-                  onChange={(event) => {
-                    setPage(1);
-                    setSearch(event.target.value);
-                  }}
-                  placeholder="Search projects, type, status, employee"
-                  value={search}
-                />
+                <div className="relative w-full sm:max-w-md">
+                  <input
+                    className="h-11 w-full rounded-xl border border-slate-300 bg-white px-4 pr-12 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#8fc740] focus:ring-2 focus:ring-[#8fc740]/20"
+                    onChange={(event) => {
+                      setPage(1);
+                      setSearch(event.target.value);
+                    }}
+                    placeholder="Search projects, type, status, employee"
+                    value={search}
+                  />
+                  {search ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPage(1);
+                        setSearch('');
+                      }}
+                      className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-sm font-bold text-slate-500 transition hover:bg-red-50 hover:text-red-600"
+                      aria-label="Clear project search"
+                    >
+                      x
+                    </button>
+                  ) : null}
+                </div>
               </div>
               {projects.length ? (
-                <div className="overflow-hidden rounded-[24px] border border-slate-200">
+                <>
+                <div className="space-y-3 md:hidden">
+                  {projects.map((project) => (
+                    <article key={project.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-base font-semibold text-slate-950">{project.name}</p>
+                          <p className="mt-1 text-sm text-slate-500">{project.assignedEmployees.map((employee) => employee.name).join(', ') || 'None'}</p>
+                        </div>
+                        <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${statusStyles[project.projectStatus] || 'bg-gray-100 text-gray-500'}`}>
+                          {formatProjectStatus(project.projectStatus)}
+                        </span>
+                      </div>
+                      <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                        <div className="rounded-xl bg-slate-50 px-3 py-2">
+                          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Due Date</p>
+                          <p className="mt-1 font-semibold text-slate-900">{formatDate(project.dueDate)}</p>
+                        </div>
+                        <div className="rounded-xl bg-slate-50 px-3 py-2">
+                          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Tasks</p>
+                          <p className="mt-1 font-semibold text-slate-900">{getScopedProjectTaskCount(project)}</p>
+                        </div>
+                      </div>
+                      <div className="mt-4 flex items-center justify-end">
+                        <button
+                          className={[
+                            'inline-flex h-9 items-center gap-1.5 rounded-l-xl px-4 text-xs font-semibold uppercase tracking-[0.14em] transition',
+                            canEditProject ? 'bg-blue-600 text-white hover:bg-blue-700' : 'cursor-not-allowed bg-slate-200 text-slate-400',
+                          ].join(' ')}
+                          disabled={!canEditProject}
+                          onClick={() => {
+                            if (!canEditProject) return;
+                            router.push(`/projects/${project.id}/edit`);
+                          }}
+                          type="button"
+                        >
+                          <EditIcon className="h-5 w-4" />
+                          Edit
+                        </button>
+                        <button
+                          aria-label="Open project actions"
+                          className="inline-flex h-9 items-center rounded-r-xl border-l border-blue-500 bg-blue-600 px-3 text-white transition hover:bg-blue-700"
+                          onClick={(event) => {
+                            handleActionMenuToggle(project.id, event);
+                          }}
+                          type="button"
+                        >
+                          <svg viewBox="0 0 12 12" aria-hidden="true" className="h-3 w-3 fill-current">
+                            <path d="M2.2 4.2 6 8l3.8-3.8H2.2Z" />
+                          </svg>
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                <div className="hidden overflow-hidden rounded-[24px] border border-slate-200 md:block">
                   <div className="overflow-x-auto">
                     <table className="min-w-full divide-y divide-slate-200 text-sm">
                       <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.2em] text-slate-500">
@@ -368,6 +438,7 @@ export default function ProjectsPage() {
                     </table>
                   </div>
                 </div>
+                </>
               ) : <EmptyState message="No projects found." />}
               <div className="mt-4 rounded-[24px] border border-slate-200 bg-white p-4">
                 <PaginationBar

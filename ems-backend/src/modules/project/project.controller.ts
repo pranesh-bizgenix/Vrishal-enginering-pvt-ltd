@@ -32,6 +32,17 @@ export class ProjectController {
     });
   }
 
+  @Get(':projectId')
+  getProjectById(
+    @Headers('authorization') authorization: string | undefined,
+    @Param('projectId') projectId: string,
+    @Query('includeTasks') includeTasks?: string,
+  ) {
+    return this.projectService.getProjectById(authorization, projectId, {
+      includeTasks: includeTasks !== 'false',
+    });
+  }
+
   @Post()
   createProject(
     @Headers('authorization') authorization: string | undefined,

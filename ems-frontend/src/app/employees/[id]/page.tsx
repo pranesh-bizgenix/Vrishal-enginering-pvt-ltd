@@ -26,6 +26,27 @@ function isTaskApproved(task: Task) {
   return task.notes.some((note) => note.message.trim().toLowerCase().startsWith('approved by'));
 }
 
+const TASK_PREVIEW_LIMIT = 5;
+
+function TaskList({ emptyMessage, tasks }: { emptyMessage: string; tasks: Task[] }) {
+  const visibleTasks = tasks.slice(0, TASK_PREVIEW_LIMIT);
+
+  return (
+    <div className="mt-4 max-h-[620px] space-y-3 overflow-y-auto pr-1">
+      {visibleTasks.length ? visibleTasks.map((task) => (
+        <article key={task.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <p className="font-semibold text-slate-900">{task.title}</p>
+          <p className="mt-1 text-sm text-slate-600">{task.description || 'No description provided.'}</p>
+          <p className="mt-2 text-xs text-slate-500">Status: {formatLabel(task.status)} | Due: {formatDate(task.dueDate)}</p>
+        </article>
+      )) : <EmptyState message={emptyMessage} />}
+      {tasks.length > TASK_PREVIEW_LIMIT ? (
+        <p className="text-center text-xs font-medium text-slate-500">Showing latest {TASK_PREVIEW_LIMIT} of {tasks.length} tasks.</p>
+      ) : null}
+    </div>
+  );
+}
+
 export default function EmployeeViewPage() {
   const params = useParams<{ id: string }>();
   const employeeId = params?.id;
@@ -47,8 +68,8 @@ export default function EmployeeViewPage() {
       const [dashboardData, employeeData, taskData, projectData] = await Promise.all([
         api<DashboardResponse>('/dashboard'),
         api<Employee[]>('/employees'),
-        api<Task[]>('/tasks'),
-        api<Project[]>('/projects'),
+        api<Task[]>(`/tasks?employeeIds=${encodeURIComponent(employeeId)}`),
+        api<Project[]>(`/projects?employeeIds=${encodeURIComponent(employeeId)}`),
       ]);
       setDashboard(dashboardData);
       setTasks(taskData);
@@ -97,8 +118,26 @@ export default function EmployeeViewPage() {
     return tasks.filter((task) => task.assignedEmployeeIds.includes(employee.id));
   }, [employee, tasks]);
 
-  const pendingTasks = useMemo(() => employeeTasks.filter((task) => !isTaskApproved(task)), [employeeTasks]);
-  const completedTasks = useMemo(() => employeeTasks.filter((task) => isTaskApproved(task)), [employeeTasks]);
+  const taskBuckets = useMemo(() => {
+    const pending: Task[] = [];
+    const ongoing: Task[] = [];
+    const completed: Task[] = [];
+
+    for (const task of employeeTasks) {
+      if (isTaskApproved(task)) {
+        completed.push(task);
+      } else if (task.status === 'IN_PROGRESS') {
+        ongoing.push(task);
+      } else {
+        pending.push(task);
+      }
+    }
+
+    return { pending, ongoing, completed };
+  }, [employeeTasks]);
+  const pendingTasks = taskBuckets.pending;
+  const ongoingTasks = taskBuckets.ongoing;
+  const completedTasks = taskBuckets.completed;
 
   function handleSection(section: SectionKey) {
     setSidebarOpen(false);
@@ -142,10 +181,12 @@ export default function EmployeeViewPage() {
               </button>
             </div>
 
-            <div className="mt-6 grid gap-4 md:grid-cols-4">
+            <div className="mt-6 grid gap-4 md:grid-cols-3 xl:grid-cols-6">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs uppercase tracking-[0.25em] text-slate-500">Phone</p><p className="mt-2 text-lg font-semibold text-slate-950">{employee?.phone || 'Not added'}</p></div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs uppercase tracking-[0.25em] text-slate-500">Assigned Projects</p><p className="mt-2 text-lg font-semibold text-slate-950">{assignedProjects.length}</p></div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs uppercase tracking-[0.25em] text-slate-500">Total Tasks</p><p className="mt-2 text-lg font-semibold text-slate-950">{employeeTasks.length}</p></div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs uppercase tracking-[0.25em] text-slate-500">Pending Tasks</p><p className="mt-2 text-lg font-semibold text-slate-950">{pendingTasks.length}</p></div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs uppercase tracking-[0.25em] text-slate-500">Ongoing Tasks</p><p className="mt-2 text-lg font-semibold text-slate-950">{ongoingTasks.length}</p></div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs uppercase tracking-[0.25em] text-slate-500">Completed Tasks</p><p className="mt-2 text-lg font-semibold text-slate-950">{completedTasks.length}</p></div>
             </div>
 
@@ -158,35 +199,25 @@ export default function EmployeeViewPage() {
                   </div>
                   <div className="flex gap-3 text-sm">
                     <span className="rounded-full bg-amber-100 px-3 py-1 font-semibold text-amber-700">Pending {pendingTasks.length}</span>
+                    <span className="rounded-full bg-blue-100 px-3 py-1 font-semibold text-blue-700">Ongoing {ongoingTasks.length}</span>
                     <span className="rounded-full bg-emerald-100 px-3 py-1 font-semibold text-emerald-700">Completed {completedTasks.length}</span>
                   </div>
                 </div>
 
-                <div className="mt-5 grid gap-4 xl:grid-cols-2">
+                <div className="mt-5 grid gap-4 xl:grid-cols-3">
                   <div className="rounded-2xl border border-slate-200 bg-white p-4">
                     <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Pending Tasks</h3>
-                    <div className="mt-4 space-y-3">
-                      {pendingTasks.length ? pendingTasks.map((task) => (
-                        <article key={task.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                          <p className="font-semibold text-slate-900">{task.title}</p>
-                          <p className="mt-1 text-sm text-slate-600">{task.description || 'No description provided.'}</p>
-                          <p className="mt-2 text-xs text-slate-500">Status: {formatLabel(task.status)} | Due: {formatDate(task.dueDate)}</p>
-                        </article>
-                      )) : <EmptyState message="No pending tasks for this employee." />}
-                    </div>
+                    <TaskList emptyMessage="No pending tasks for this employee." tasks={pendingTasks} />
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Ongoing Tasks</h3>
+                    <TaskList emptyMessage="No ongoing tasks for this employee." tasks={ongoingTasks} />
                   </div>
 
                   <div className="rounded-2xl border border-slate-200 bg-white p-4">
                     <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Completed Tasks</h3>
-                    <div className="mt-4 space-y-3">
-                      {completedTasks.length ? completedTasks.map((task) => (
-                        <article key={task.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                          <p className="font-semibold text-slate-900">{task.title}</p>
-                          <p className="mt-1 text-sm text-slate-600">{task.description || 'No description provided.'}</p>
-                          <p className="mt-2 text-xs text-slate-500">Status: {formatLabel(task.status)} | Due: {formatDate(task.dueDate)}</p>
-                        </article>
-                      )) : <EmptyState message="No completed tasks for this employee." />}
-                    </div>
+                    <TaskList emptyMessage="No completed tasks for this employee." tasks={completedTasks} />
                   </div>
                 </div>
               </section>

@@ -342,15 +342,30 @@ export default function EmployeesPage() {
 
             <div className="mt-6 rounded-[24px] border border-slate-200">
               <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <input
-                  className="h-11 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#8fc740] focus:ring-2 focus:ring-[#8fc740]/20 sm:max-w-sm"
-                  onChange={(event) => {
-                    setPage(1);
-                    setSearch(event.target.value);
-                  }}
-                  placeholder="Search employees, role, leader, phone"
-                  value={search}
-                />
+                <div className="relative w-full sm:max-w-sm">
+                  <input
+                    className="h-11 w-full rounded-xl border border-slate-300 bg-white px-4 pr-12 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#8fc740] focus:ring-2 focus:ring-[#8fc740]/20"
+                    onChange={(event) => {
+                      setPage(1);
+                      setSearch(event.target.value);
+                    }}
+                    placeholder="Search employees, role, leader, phone"
+                    value={search}
+                  />
+                  {search ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPage(1);
+                        setSearch('');
+                      }}
+                      className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-sm font-bold text-slate-500 transition hover:bg-red-50 hover:text-red-600"
+                      aria-label="Clear employee search"
+                    >
+                      x
+                    </button>
+                  ) : null}
+                </div>
               </div>
               {visibleEmployees.length ? (
                 <div className="overflow-x-auto">
@@ -368,12 +383,12 @@ export default function EmployeesPage() {
                     <tbody className="divide-y divide-slate-200 bg-white">
                       {visibleEmployees.map((employee) => (
                         <tr key={employee.id} className="align-top">
-                          <td className="px-6 py-5"><p className="text-sm font-semibold text-slate-900">{employee.name}</p></td>
-                          <td className="px-6 py-5 text-sm text-slate-600">{employee.roles.map(formatRoleLabel).join(', ')}</td>
-                          <td className="px-6 py-5 text-sm text-slate-600">{employee.currentProjectIds.length}</td>
-                          <td className="px-6 py-5 text-sm text-slate-600"><p className="mt-1">{employee.phone || 'Not added'}</p></td>
-                          <td className="px-6 py-5"><StatusBadge active={employee.active} /></td>
-                          <td className="px-6 py-5 text-right">
+                          <td className="px-5 py-5"><p className="text-sm font-semibold text-slate-900">{employee.name}</p></td>
+                          <td className="px-5 py-5 text-sm text-slate-600">{employee.roles.map(formatRoleLabel).join(', ')}</td>
+                          <td className="px-5 py-5 text-sm text-slate-600">{employee.currentProjectIds.length}</td>
+                          <td className="px-5 py-5 text-sm text-slate-600"><p className="mt-1">{employee.phone || 'Not added'}</p></td>
+                          <td className="px-5 py-5"><StatusBadge active={employee.active} /></td>
+                          <td className="px-5 py-5 text-right">
                             <div className="inline-flex items-center gap-2">
                               <div className="inline-flex">
                                 {(() => {

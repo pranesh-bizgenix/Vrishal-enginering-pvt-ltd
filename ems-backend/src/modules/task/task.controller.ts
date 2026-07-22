@@ -31,12 +31,18 @@ export class TaskController {
     @Query('perPage') perPage?: string,
     @Query('search') search?: string,
     @Query('openOnly') openOnly?: string,
+    @Query('dueDate') dueDate?: string,
+    @Query('employeeIds') employeeIds?: string,
+    @Query('projectId') projectId?: string,
   ) {
     return this.taskService.getTasks(authorization, {
       page: page ? Number(page) : undefined,
       perPage: perPage ? Number(perPage) : undefined,
       search,
       openOnly: openOnly === 'true',
+      dueDate,
+      employeeIds: employeeIds ? employeeIds.split(',') : undefined,
+      projectId,
     });
   }
 

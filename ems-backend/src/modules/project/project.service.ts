@@ -13,6 +13,14 @@ export class ProjectService {
     return this.emsService.getProjects(authorization, options);
   }
 
+  getProjectById(
+    authorization: string | undefined,
+    projectId: string,
+    options?: { includeTasks?: boolean },
+  ) {
+    return this.emsService.getProjectById(authorization, projectId, options);
+  }
+
   createProject(
     authorization: string | undefined,
     payload: {

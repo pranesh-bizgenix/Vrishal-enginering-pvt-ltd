@@ -97,6 +97,9 @@ const Login = () => {
           <form onSubmit={formik.handleSubmit} noValidate className="space-y-4">
             {/* Email */}
             <div>
+              <label className="mb-2 block text-sm font-medium text-[#010048]">
+                Email <span className="text-red-500">*</span>
+              </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
                   <EnvelopeIcon className="w-5 h-5 text-gray-400" />
@@ -124,6 +127,9 @@ const Login = () => {
             </div>
             {/* Password */}
             <div>
+              <label className="mb-2 block text-sm font-medium text-[#010048]">
+                Password <span className="text-red-500">*</span>
+              </label>
               <div className="relative">
                 {/* Left Lock Icon */}
                 <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
