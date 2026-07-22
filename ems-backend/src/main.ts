@@ -17,10 +17,15 @@ async function bootstrap() {
       limit: process.env.REQUEST_BODY_LIMIT || '100mb',
     }),
   );
+  const corsOrigins = (
+    process.env.CORS_ORIGINS ??
+    'http://localhost:3010,http://127.0.0.1:3010,https://tms.sjsangath.com'
+  )
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
   app.enableCors({
-    origin: (process.env.CORS_ORIGINS ?? 'http://localhost:3010')
-      .split(',')
-      .map((value) => value.trim()),
+    origin: corsOrigins,
     credentials: true,
   });
   app.setGlobalPrefix('api');

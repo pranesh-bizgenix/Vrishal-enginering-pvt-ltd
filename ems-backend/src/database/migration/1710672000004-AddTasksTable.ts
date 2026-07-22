@@ -13,10 +13,33 @@ export class AddTasksTable1710672000004 implements MigrationInterface {
         status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
         project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
         due_date TIMESTAMPTZ NULL,
+        created_by_employee_id UUID NULL REFERENCES employees(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL,
         deleted_at TIMESTAMPTZ NULL
       )
+    `);
+
+    await queryRunner.query(`
+      ALTER TABLE tasks
+      ADD COLUMN IF NOT EXISTS created_by_employee_id UUID NULL
+    `);
+
+    await queryRunner.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'fk_tasks_created_by_employee'
+        ) THEN
+          ALTER TABLE tasks
+          ADD CONSTRAINT fk_tasks_created_by_employee
+          FOREIGN KEY (created_by_employee_id)
+          REFERENCES employees(id)
+          ON DELETE SET NULL;
+        END IF;
+      END $$;
     `);
 
     await queryRunner.query(
@@ -30,6 +53,8 @@ export class AddTasksTable1710672000004 implements MigrationInterface {
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`DROP INDEX IF EXISTS idx_tasks_status`);
     await queryRunner.query(`DROP INDEX IF EXISTS idx_tasks_project_id`);
+    await queryRunner.query(`ALTER TABLE tasks DROP CONSTRAINT IF EXISTS fk_tasks_created_by_employee`);
+    await queryRunner.query(`ALTER TABLE tasks DROP COLUMN IF EXISTS created_by_employee_id`);
     await queryRunner.query(`DROP TABLE IF EXISTS tasks`);
   }
 }

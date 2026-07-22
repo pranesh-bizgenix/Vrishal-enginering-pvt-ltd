@@ -4,6 +4,26 @@ export class AddPerformanceIndexes1710672000014 implements MigrationInterface {
   name = 'AddPerformanceIndexes1710672000014';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`
+      ALTER TABLE tasks
+      ADD COLUMN IF NOT EXISTS created_by_employee_id UUID NULL
+    `);
+    await queryRunner.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'fk_tasks_created_by_employee'
+        ) THEN
+          ALTER TABLE tasks
+          ADD CONSTRAINT fk_tasks_created_by_employee
+          FOREIGN KEY (created_by_employee_id)
+          REFERENCES employees(id)
+          ON DELETE SET NULL;
+        END IF;
+      END $$;
+    `);
     await queryRunner.query(
       `CREATE INDEX IF NOT EXISTS idx_employees_active_deleted ON employees (is_active, deleted_at)`,
     );

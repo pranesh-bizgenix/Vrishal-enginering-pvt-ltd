@@ -1,10 +1,9 @@
 const LOCAL_API_URL = 'http://localhost:5010/api';
-const PRODUCTION_API_URL = 'https://tmsapi.bizgenix.ai';
+const PRODUCTION_API_URL = '/api';
 
 export type Role = 'SA1' | 'SA2' | 'ADMIN' | 'LEADER' | 'EMPLOYEE';
 export type TaskType = 'SIMPLE';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:5010/api';
 const TOKEN_KEY = 'ems-token';
 
 function resolveApiUrl() {
@@ -26,6 +25,7 @@ function resolveApiUrl() {
 }
 
 export const API_URL = resolveApiUrl();
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? API_URL;
 
 export async function apiFetch<T>(
   path: string,
