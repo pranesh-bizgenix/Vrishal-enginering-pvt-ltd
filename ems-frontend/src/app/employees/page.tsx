@@ -312,13 +312,13 @@ export default function EmployeesPage() {
                 <h1 className="mt-3 text-3xl font-semibold text-slate-900">Employees</h1>
                 <p className="mt-2 text-sm text-slate-500">Review current team members and update active status.</p>
               </div>
-              <div className="flex flex-row gap-3">
+              <div className="flex flex-row gap-2 sm:gap-3">
                 <button
                   type="button"
                   onClick={() => void loadData()}
                   disabled={busy}
                   className={[
-                    'inline-flex items-center gap-2 rounded-full border px-5 py-3 text-sm font-medium transition',
+                    'inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-3 text-sm font-medium transition sm:px-5',
                     busy ? 'cursor-wait border-slate-200 bg-slate-100 text-slate-400' : 'border-slate-300 text-slate-700 hover:bg-slate-50',
                   ].join(' ')}
                 >
@@ -328,7 +328,7 @@ export default function EmployeesPage() {
                 <Link
                   href="/employees/new"
                   className={[
-                    'inline-flex items-center gap-2 rounded-full px-5 py-1 text-sm font-medium transition',
+                    'inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-3 py-3 text-sm font-medium transition sm:px-5',
                     canCreateEmployee ? 'bg-blue-600 text-white' : 'pointer-events-none bg-slate-200 text-slate-400',
                   ].join(' ')}
                   aria-disabled={!canCreateEmployee}

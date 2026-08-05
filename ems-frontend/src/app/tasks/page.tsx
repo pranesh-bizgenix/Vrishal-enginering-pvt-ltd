@@ -517,23 +517,23 @@ export default function TasksPage() {
                 <h1 className="mt-3 text-3xl font-semibold text-slate-900">Tasks</h1>
                 <p className="mt-2 text-sm text-slate-500">Manage assigned, pending, and completed work items.</p>
               </div>
-              <div className="flex flex-row gap-3">
-                                <button
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-3">
+                <button
                   type="button"
                   onClick={() => void loadData()}
                   disabled={busy}
                   className={[
-                    'inline-flex items-center gap-2 rounded-full border px-5 py-3 text-sm font-medium transition',
+                    'inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full border px-3 py-3 text-sm font-medium transition sm:px-5',
                     busy ? 'cursor-wait border-slate-200 bg-slate-100 text-slate-400' : 'border-slate-300 text-slate-700 hover:bg-slate-50',
                   ].join(' ')}
                 >
                   <ArrowPathIcon className={`h-4 w-4 ${busy ? 'animate-spin' : ''}`} />
                   {busy ? 'Refreshing...' : 'Refresh'}
                 </button>
-                <Link href="/notes" className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-5 py-3 text-sm font-medium text-slate-700">
+                <Link href="/notes" className="inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full border border-slate-300 bg-white px-3 py-3 text-sm font-medium text-slate-700 sm:px-5">
                   Notes History
                 </Link>
-                <Link href="/tasks/new" className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-5 py-3 text-sm font-medium text-white">
+                <Link href="/tasks/new" className="col-span-2 inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full bg-blue-600 px-3 py-3 text-sm font-medium text-white sm:col-auto sm:px-5">
                   <PlusIcon className="h-4 w-4" />
                   Create Task
                 </Link>
