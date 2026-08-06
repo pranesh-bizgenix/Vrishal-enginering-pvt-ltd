@@ -10,9 +10,9 @@ import { DashboardSidebar, DashboardTopbar } from '../../../components/Dashboard
 import type { DashboardResponse, Employee, NavItem, Project, ProjectStatus, SectionKey } from '../../dashboard/types';
 import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
 
-const fieldClassName = 'w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400';
-const primaryButtonClassName = 'inline-flex items-center justify-center rounded-2xl bg-blue-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-blue-700';
-const secondaryButtonClassName = 'inline-flex items-center justify-center rounded-2xl border border-red-400 bg-white px-10 py-3 text-xl font-bold text-red-600 transition hover:bg-slate-50';
+const fieldClassName = 'min-w-0 w-full max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400';
+const primaryButtonClassName = 'inline-flex w-full items-center justify-center rounded-2xl bg-blue-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-blue-700 sm:w-auto';
+const secondaryButtonClassName = 'inline-flex w-full items-center justify-center rounded-2xl border border-red-400 bg-white px-4 py-3 text-base font-bold text-red-600 transition hover:bg-slate-50 sm:w-auto sm:px-10 sm:text-xl';
 const projectStatusOptions: Array<{ value: ProjectStatus; label: string }> = [
   { value: 'NOT_STARTED', label: 'Not Started' },
   { value: 'STARTED', label: 'Started' },
@@ -32,7 +32,7 @@ const projectFormInitial = {
 
 function Field({ label, children, required = false }: { label: string; children: React.ReactNode; required?: boolean }) {
   return (
-    <label className="block">
+    <label className="block min-w-0">
       <span className="mb-2 block text-sm font-medium text-slate-700">
         {label}{required ? <span className="text-red-500"> *</span> : null}
       </span>
@@ -185,7 +185,7 @@ export default function NewProjectPage() {
                 </div>
               </div>
               {!canCreateProject ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">Only SA1 can create projects.</div> : null}
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid min-w-0 gap-4 md:grid-cols-2">
               <Field label="Project Name" required>
                 <input className={fieldClassName} onChange={(event) => setProjectForm({ ...projectForm, name: event.target.value })} placeholder="Project name" required value={projectForm.name} />
               </Field>
@@ -201,7 +201,7 @@ export default function NewProjectPage() {
                   <button
                     type="button"
                     onClick={() => setEmployeesOpen((current) => !current)}
-                    className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-900 transition hover:border-slate-300"
+                    className="flex min-w-0 w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-900 transition hover:border-slate-300"
                   >
                     <span className="truncate pr-3 text-slate-700">{selectedEmployeesLabel}</span>
                     {employeesOpen ? <ChevronUpIcon className="h-5 w-5 text-slate-500" /> : <ChevronDownIcon className="h-5 w-5 text-slate-500" />}

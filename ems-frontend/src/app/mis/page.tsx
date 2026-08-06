@@ -917,8 +917,8 @@ export default function MisPage() {
               <div className="rounded-2xl bg-slate-100 p-5"><p className="text-sm text-slate-500">Task Completed</p><p className="mt-2 text-3xl font-semibold text-slate-950">{stageBreakdown.completed}</p></div>
             </div>
 
-            <div className="mt-6 grid gap-6 xl:grid-cols-2">
-              <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-5">
+            <div className="mt-6 grid min-w-0 gap-6 xl:grid-cols-2">
+              <div className="min-w-0 rounded-[24px] border border-slate-200 bg-slate-50 p-4 sm:p-5">
                 <div className="flex items-center justify-between gap-3">
                   <h2 className="text-lg font-semibold text-slate-900">Overdue Projects</h2>
                   <span className="text-xs text-slate-500">{formatDateTime(misSummary?.generatedAt ? misSummary?.generatedAt : "")}</span>
@@ -934,7 +934,7 @@ export default function MisPage() {
                 </div>
               </div>
 
-              <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-5">
+              <div className="min-w-0 rounded-[24px] border border-slate-200 bg-slate-50 p-4 sm:p-5">
                 <div className="flex items-center justify-between gap-3">
                   <h2 className="text-lg font-semibold text-slate-900">Daily Pending Summary</h2>
                   <span className="text-xs text-slate-500">{formatDateTime(dailySummary?.generatedAt ? dailySummary?.generatedAt : "")}</span>
@@ -1020,9 +1020,9 @@ export default function MisPage() {
               </div>
             </div>
 
-            <div className="mt-6 grid gap-6 xl:grid-cols-2">
-              <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-5">
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+            <div className="mt-6 grid min-w-0 gap-6 xl:grid-cols-2">
+              <div className="min-w-0 rounded-[24px] border border-slate-200 bg-slate-50 p-4 sm:p-5">
+                <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                   <h2 className="min-w-0 text-lg font-semibold text-slate-900">Your Personal Task List</h2>
                   <span className="shrink-0 text-xs text-slate-500">{personalTasks.length} tasks</span>
                 </div>
@@ -1034,7 +1034,7 @@ export default function MisPage() {
                           <p className="break-words font-semibold text-slate-900">{task.title}</p>
                           <p className="mt-1 break-words text-slate-500">{task.projectName}</p>
                         </div>
-                        <span className="w-fit shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{task.status === 'IN_PROGRESS' ? 'Ongoing' : task.status.replace(/_/g, ' ')}</span>
+                        <span className="w-fit max-w-full shrink-0 break-words rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{task.status === 'IN_PROGRESS' ? 'Ongoing' : task.status.replace(/_/g, ' ')}</span>
                       </div>
                       <p className="mt-2 text-slate-600">Due date: <span className="font-medium text-slate-900">{formatDate(task.dueDate)}</span></p>
                     </div>
@@ -1042,8 +1042,8 @@ export default function MisPage() {
                 </div>
               </div>
 
-              <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-5">
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <div className="min-w-0 rounded-[24px] border border-slate-200 bg-slate-50 p-4 sm:p-5">
+                <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                   <h2 className="min-w-0 text-lg font-semibold text-slate-900">Recent Notifications</h2>
                   <span className="shrink-0 text-xs text-slate-500">{isSystemAdminUser ? 'All notifications' : 'Employee wise'}</span>
                 </div>
@@ -1052,9 +1052,9 @@ export default function MisPage() {
                     <div key={notification.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm">
                       <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
                         <p className="min-w-0 break-words font-semibold text-slate-900">{notification.category}</p>
-                        <span className="shrink-0 text-xs text-slate-500">{formatDateTime(notification.createdAt)}</span>
+                        <span className="max-w-full shrink-0 break-words text-xs text-slate-500 sm:text-right">{formatDateTime(notification.createdAt)}</span>
                       </div>
-                      <p className="mt-2 text-slate-600">{notification.message}</p>
+                      <p className="mt-2 break-words text-slate-600">{notification.message}</p>
                     </div>
                   )) : <EmptyState message="No recent notifications available for this period." />}
                 </div>
