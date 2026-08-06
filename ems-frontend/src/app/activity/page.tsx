@@ -192,20 +192,20 @@ export default function ActivityPage() {
               {logs.length ? (
                 <div className="space-y-4">
                   {logs.map((item) => (
-                    <article key={item.id} className="rounded-[24px] border border-slate-200 bg-white px-5 py-4">
+                    <article key={item.id} className="min-w-0 rounded-[24px] border border-slate-200 bg-white px-4 py-4 sm:px-5">
                       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-semibold text-slate-950">{item.category}</span>
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <span className="min-w-0 break-words font-semibold text-slate-950">{item.category}</span>
                           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{item.channel}</span>
                           <span className={[
                             'rounded-full px-3 py-1 text-xs font-semibold',
                             item.status === 'SENT' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700',
                           ].join(' ')}>{item.status}</span>
                         </div>
-                        <span className="text-sm text-slate-500">{formatDateTime(item.createdAt)}</span>
+                        <span className="shrink-0 text-xs text-slate-500 sm:text-sm">{formatDateTime(item.createdAt)}</span>
                       </div>
-                      <p className="mt-2 text-sm leading-7 text-slate-600">{item.message}</p>
-                      <p className="mt-2 text-xs text-slate-500">Recipients: {formatRecipients(item)}</p>
+                      <p className="mt-2 break-words text-sm leading-7 text-slate-600">{item.message}</p>
+                      <p className="mt-2 break-words text-xs text-slate-500">Recipients: {formatRecipients(item)}</p>
                     </article>
                   ))}
                   <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-4">

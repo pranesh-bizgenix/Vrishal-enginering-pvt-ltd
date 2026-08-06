@@ -912,9 +912,9 @@ export default function MisPage() {
 
             <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <div className="rounded-2xl bg-slate-100 p-5"><p className="text-sm text-slate-500">Active Projects</p><p className="mt-2 text-3xl font-semibold text-slate-950">{activeProjectsCount}</p></div>
-              <div className="rounded-2xl bg-slate-100 p-5"><p className="text-sm text-slate-500">Pending</p><p className="mt-2 text-3xl font-semibold text-slate-950">{stageBreakdown.pending}</p></div>
-              <div className="rounded-2xl bg-slate-100 p-5"><p className="text-sm text-slate-500">Ongoing</p><p className="mt-2 text-3xl font-semibold text-slate-950">{stageBreakdown.inProgress}</p></div>
-              <div className="rounded-2xl bg-slate-100 p-5"><p className="text-sm text-slate-500">Completed</p><p className="mt-2 text-3xl font-semibold text-slate-950">{stageBreakdown.completed}</p></div>
+              <div className="rounded-2xl bg-slate-100 p-5"><p className="text-sm text-slate-500">Task Pending</p><p className="mt-2 text-3xl font-semibold text-slate-950">{stageBreakdown.pending}</p></div>
+              <div className="rounded-2xl bg-slate-100 p-5"><p className="text-sm text-slate-500">Task Ongoing</p><p className="mt-2 text-3xl font-semibold text-slate-950">{stageBreakdown.inProgress}</p></div>
+              <div className="rounded-2xl bg-slate-100 p-5"><p className="text-sm text-slate-500">Task Completed</p><p className="mt-2 text-3xl font-semibold text-slate-950">{stageBreakdown.completed}</p></div>
             </div>
 
             <div className="mt-6 grid gap-6 xl:grid-cols-2">
@@ -1022,19 +1022,19 @@ export default function MisPage() {
 
             <div className="mt-6 grid gap-6 xl:grid-cols-2">
               <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-5">
-                <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-lg font-semibold text-slate-900">Your Personal Task List</h2>
-                  <span className="text-xs text-slate-500">{personalTasks.length} tasks</span>
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                  <h2 className="min-w-0 text-lg font-semibold text-slate-900">Your Personal Task List</h2>
+                  <span className="shrink-0 text-xs text-slate-500">{personalTasks.length} tasks</span>
                 </div>
                 <div className="mt-4 space-y-3">
                   {personalTasks.length ? personalTasks.slice(0, 8).map((task) => (
                     <div key={task.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="font-semibold text-slate-900">{task.title}</p>
-                          <p className="mt-1 text-slate-500">{task.projectName}</p>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                        <div className="min-w-0">
+                          <p className="break-words font-semibold text-slate-900">{task.title}</p>
+                          <p className="mt-1 break-words text-slate-500">{task.projectName}</p>
                         </div>
-                        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{task.status === 'IN_PROGRESS' ? 'Ongoing' : task.status.replace(/_/g, ' ')}</span>
+                        <span className="w-fit shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{task.status === 'IN_PROGRESS' ? 'Ongoing' : task.status.replace(/_/g, ' ')}</span>
                       </div>
                       <p className="mt-2 text-slate-600">Due date: <span className="font-medium text-slate-900">{formatDate(task.dueDate)}</span></p>
                     </div>
@@ -1043,15 +1043,15 @@ export default function MisPage() {
               </div>
 
               <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-5">
-                <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-lg font-semibold text-slate-900">Recent Notifications</h2>
-                  <span className="text-xs text-slate-500">{isSystemAdminUser ? 'All notifications' : 'Employee wise'}</span>
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                  <h2 className="min-w-0 text-lg font-semibold text-slate-900">Recent Notifications</h2>
+                  <span className="shrink-0 text-xs text-slate-500">{isSystemAdminUser ? 'All notifications' : 'Employee wise'}</span>
                 </div>
                 <div className="mt-4 space-y-3">
                   {recentNotifications.length ? recentNotifications.slice(0, 3).map((notification: NotificationLog) => (
                     <div key={notification.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm">
-                      <div className="flex items-start justify-between gap-3">
-                        <p className="font-semibold text-slate-900">{notification.category}</p>
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                        <p className="min-w-0 break-words font-semibold text-slate-900">{notification.category}</p>
                         <span className="shrink-0 text-xs text-slate-500">{formatDateTime(notification.createdAt)}</span>
                       </div>
                       <p className="mt-2 text-slate-600">{notification.message}</p>

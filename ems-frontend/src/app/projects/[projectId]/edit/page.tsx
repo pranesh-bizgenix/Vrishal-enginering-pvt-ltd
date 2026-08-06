@@ -239,7 +239,7 @@ export default function EditProjectPage() {
                   <h1 className="text-xl font-semibold text-slate-950 sm:text-2xl">Edit Project</h1>
                   <p className="mt-1 text-sm text-slate-500">Update project details, status, and assigned active employees.</p>
                 </div>
-                <div className="flex flex-wrap gap-3">
+                <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
                   <button className={secondaryButtonClassName} onClick={() => router.push('/projects')} type="button">Cancel</button>
                   <button className={primaryButtonClassName} disabled={saving || !canEditProject} type="submit">{saving ? 'Saving...' : 'Update Project'}</button>
                 </div>

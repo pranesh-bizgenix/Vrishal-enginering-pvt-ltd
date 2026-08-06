@@ -34,7 +34,7 @@ function loadSeedEmployees(): SeedEmployee[] {
       email: 'admin@sjsangath.com',
       password: hashPassword('sjsangath@123'),
       phone: '',
-      roles: ['ADMIN'],
+      roles: ['SA1'],
       isActive: true,
       createdAt: now,
       updatedAt: now,

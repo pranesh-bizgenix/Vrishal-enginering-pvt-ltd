@@ -179,7 +179,7 @@ export default function NewProjectPage() {
                   <h1 className="text-xl font-semibold text-slate-950 sm:text-2xl">Create Project</h1>
                   <p className="mt-1 text-sm text-slate-500">Set up a new project, choose its status,<br /> and assign active employees.</p>
                 </div>
-                <div className="flex flex-wrap gap-3">
+                <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
                   <button className={secondaryButtonClassName} onClick={() => router.push('/projects')} type="button">Cancel</button>
                   <button className={primaryButtonClassName} disabled={saving || !canCreateProject} type="submit">{saving ? 'Saving...' : 'Create Project'}</button>
                 </div>

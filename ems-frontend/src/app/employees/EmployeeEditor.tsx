@@ -63,8 +63,8 @@ function getInitialState(employee?: EmployeeEditorRecord): EmployeeFormState {
 }
 
 const fieldClassName = 'w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400';
-const primaryButtonClassName = 'inline-flex items-center justify-center rounded-2xl bg-blue-600 px-4 text-sm font-medium text-white transition hover:bg-blue-700';
-const secondaryButtonClassName = 'inline-flex items-center justify-center rounded-2xl border border-red-400 bg-white px-12 py-3 text-xl font-bold text-red-600 transition hover:bg-slate-50';
+const primaryButtonClassName = 'inline-flex min-h-11 w-full items-center justify-center rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto';
+const secondaryButtonClassName = 'inline-flex min-h-11 w-full items-center justify-center rounded-2xl border border-red-400 bg-white px-5 py-3 text-sm font-semibold text-red-600 transition hover:bg-red-50 sm:w-auto';
 const roleFallback: Role[] = roleOrder;
 
 const createInitialForm = (): EmployeeFormState => getInitialState();
@@ -334,8 +334,8 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
 
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] sm:p-6 lg:p-7">
             <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
                 <h1 className="text-xl font-semibold text-slate-950 sm:text-2xl">
                   {mode === 'edit' ? 'Update Employee' : 'Create Employee'}
                 </h1>
@@ -346,7 +346,7 @@ export function EmployeeEditor({ employeeId, mode }: EmployeeEditorProps) {
                 </p>
               </div>
 
-              <div className="flex flex-wrap gap-3">
+              <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
                 <button className={secondaryButtonClassName} onClick={() => router.push('/employees')} type="button">
                   Cancel
                 </button>

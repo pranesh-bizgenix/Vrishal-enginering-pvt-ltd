@@ -2221,7 +2221,13 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       existingEmployee.email || undefined,
     );
     const allowedRoles = this.getAssignableRolesForEmployee(currentEmployee);
-    const nextRoles = requestedNextRoles.filter((role) => allowedRoles.includes(role));
+    const isBootstrapSuperAdmin =
+      (existingEmployee.email || existingUser?.email || archivedUser?.email || '')
+        .trim()
+        .toLowerCase() === 'admin@sjsangath.com';
+    const nextRoles = isBootstrapSuperAdmin
+      ? ['SA1']
+      : requestedNextRoles.filter((role) => allowedRoles.includes(role));
     const normalizedNextRoles = nextRoles.length ? nextRoles : ['EMPLOYEE'];
     const nextActive =
       typeof payload.active === 'boolean'
