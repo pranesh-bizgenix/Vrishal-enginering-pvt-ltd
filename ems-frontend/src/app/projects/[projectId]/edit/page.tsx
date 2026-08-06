@@ -220,21 +220,21 @@ export default function EditProjectPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#edf2f7] text-slate-900 lg:flex">
+    <main className="min-h-screen w-full max-w-full overflow-x-hidden bg-[#edf2f7] text-slate-900 lg:flex">
       <DashboardSidebar activeSection="projects" navItems={navItems} onClose={() => setSidebarOpen(false)} onSelect={handleSection} open={sidebarOpen} />
       <div className="flex min-w-0 flex-1 flex-col">
         <DashboardTopbar canRunReport={canRunReports(me?.roles ?? [])} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} subtitle="Task Management System" title="Edit Project" />
-        <section className="px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
+        <section className="w-full min-w-0 max-w-full px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
           {dashboard && !canEditProject ? (
             <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
               Only SA1 can edit projects.
             </div>
           ) : null}
           {error ? <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
-          <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] sm:p-6 lg:p-7">
-            <form className="space-y-4" onSubmit={submitProject}>
+          <section className="w-full min-w-0 max-w-full overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] sm:p-6 lg:p-7">
+            <form className="w-full min-w-0 max-w-full space-y-4" onSubmit={submitProject}>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
+                <div className="min-w-0">
                   <p className="text-sm font-medium uppercase tracking-[0.3em] text-slate-400 mb-2">Project Module</p>
                   <h1 className="text-xl font-semibold text-slate-950 sm:text-2xl">Edit Project</h1>
                   <p className="mt-1 text-sm text-slate-500">Update project details, status, and assigned active employees.</p>
@@ -244,7 +244,7 @@ export default function EditProjectPage() {
                   <button className={primaryButtonClassName} disabled={saving || !canEditProject} type="submit">{saving ? 'Saving...' : 'Update Project'}</button>
                 </div>
               </div>
-              <div className="grid min-w-0 gap-4 md:grid-cols-2">
+              <div className="grid w-full min-w-0 max-w-full grid-cols-1 gap-4 md:grid-cols-2">
               <Field label="Project Name" required>
                 <input className={fieldClassName} disabled={!canEditProject} onChange={(event) => setProjectForm({ ...projectForm, name: event.target.value })} placeholder="Project name" required value={projectForm.name} />
               </Field>
@@ -254,12 +254,12 @@ export default function EditProjectPage() {
               <Field label="Project Description">
                 <textarea className={`${fieldClassName} min-h-28 resize-y`} disabled={!canEditProject} onChange={(event) => setProjectForm({ ...projectForm, description: event.target.value })} placeholder="Description" value={projectForm.description} />
               </Field>
-              <div className="rounded-[26px] border border-slate-200 bg-slate-50 p-4 sm:p-5">
+              <div className="min-w-0 max-w-full rounded-[26px] border border-slate-200 bg-slate-50 p-4 sm:p-5">
                 <div className="flex flex-col gap-2">
                   <p className="text-sm font-medium text-slate-700">Assign Employees <span className="text-red-500">*</span></p>
                   <p className="text-xs text-slate-500">Inactive employees stay visible for old project history, but cannot be newly assigned.</p>
                 </div>
-                <div className="relative mt-4" ref={employeeDropdownRef}>
+                <div className="relative mt-4 min-w-0 max-w-full" ref={employeeDropdownRef}>
                   <button
                     type="button"
                     onClick={() => {
