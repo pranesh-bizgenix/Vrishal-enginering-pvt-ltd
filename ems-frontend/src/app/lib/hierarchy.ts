@@ -117,28 +117,20 @@ export function getVisibleEmployeeIdsForViewer(employees: Employee[], viewer?: E
     return null;
   }
 
-  if (viewer.roles.includes('SA2')) {
-    return new Set(
-      employees
-        .filter((employee) => !employee.roles.includes('SA1'))
-        .map((employee) => employee.id),
-    );
+  const maxVisibleRolePower = getHighestRolePower(viewer.roles);
+  if (maxVisibleRolePower === rolePower.EMPLOYEE) {
+    return new Set([viewer.id]);
   }
 
-  // Old hierarchy rule kept for reference:
-  // const viewerPower = getHighestRolePower(viewer.roles);
-  // if (viewerPower >= rolePower.ADMIN) {
-  //   return new Set(employees.filter((employee) => canViewerSeeEmployee(viewer, employee)).map((employee) => employee.id));
-  // }
-  //
-  // if (viewer.roles.includes('LEADER')) {
-  //   return new Set([
-  //     viewer.id,
-  //     ...getDirectLeaderEmployeeIds(employees, viewer.id),
-  //   ]);
-  // }
-
-  return new Set([viewer.id]);
+  return new Set(
+    employees
+      .filter(
+        (employee) =>
+          getHighestRolePower(employee.roles) > 0 &&
+          getHighestRolePower(employee.roles) <= maxVisibleRolePower,
+      )
+      .map((employee) => employee.id),
+  );
 }
 
 export function getAssignableEmployeesForViewer(
@@ -177,14 +169,31 @@ export function getAssignableEmployeesForViewer(
 
 export function getTaskAssignableEmployees(
   employees: Employee[],
+  viewer?: Employee | null,
   selectedEmployeeIds: string[] = [],
 ) {
+  if (!viewer) {
+    return [];
+  }
+
   const selectedIds = new Set(selectedEmployeeIds);
+  const viewerPower = getHighestRolePower(viewer.roles);
+  if (viewerPower === rolePower.EMPLOYEE) {
+    return employees.filter(
+      (employee) =>
+        employee.id === viewer.id &&
+        (employee.active !== false || selectedIds.has(employee.id)),
+    );
+  }
+
+  const maxAssignablePower = viewer.roles.includes('SA1')
+    ? rolePower.SA2
+    : viewerPower;
   return employees.filter(
     (employee) =>
       (employee.active !== false || selectedIds.has(employee.id)) &&
-      !employee.roles.includes('SA1') &&
-      !employee.roles.includes('SA2'),
+      getHighestRolePower(employee.roles) > 0 &&
+      getHighestRolePower(employee.roles) <= maxAssignablePower,
   );
 }
 

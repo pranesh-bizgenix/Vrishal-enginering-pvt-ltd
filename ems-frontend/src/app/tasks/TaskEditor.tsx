@@ -285,8 +285,8 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
   const navItems = useMemo<NavItem[]>(() => getWorkspaceNavItems(canManage, isAdmin, me?.roles ?? []), [canManage, isAdmin, me?.roles]);
   const initials = me?.name?.trim()?.charAt(0)?.toUpperCase() || 'A';
   const selectableEmployees = useMemo(
-    () => getTaskAssignableEmployees(employees, taskForm.assignedEmployeeIds),
-    [employees, taskForm.assignedEmployeeIds],
+    () => getTaskAssignableEmployees(employees, me, taskForm.assignedEmployeeIds),
+    [employees, me, taskForm.assignedEmployeeIds],
   );
   const selectedEmployeesLabel = taskForm.assignedEmployeeIds.length
     ? employees

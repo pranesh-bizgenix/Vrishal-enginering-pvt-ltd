@@ -863,40 +863,20 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
 
-    if (employee.roles.includes('SA2')) {
-      return new Set(
-        Array.from(this.employees.values())
-          .filter((item) => !item.roles.includes('SA1'))
-          .map((item) => item.id),
-      );
+    const maxVisibleRolePower = this.getHighestRolePower(employee.roles);
+    if (maxVisibleRolePower === ROLE_POWER.EMPLOYEE) {
+      return new Set([employee.id]);
     }
 
-    // Old hierarchy rule kept for reference:
-    // if (employee.roles.includes('SA2')) {
-    //   return new Set(
-    //     Array.from(this.employees.values())
-    //       .filter((item) => !item.roles.includes('SA1'))
-    //       .map((item) => item.id),
-    //   );
-    // }
-    //
-    // const power = this.getHighestRolePower(employee.roles);
-    // if (power >= ROLE_POWER.ADMIN) {
-    //   return new Set(
-    //     Array.from(this.employees.values())
-    //       .filter((item) => item.id === employee.id || this.getHighestRolePower(item.roles) < power)
-    //       .map((item) => item.id),
-    //   );
-    // }
-    //
-    // if (employee.roles.includes('LEADER')) {
-    //   return new Set([
-    //     employee.id,
-    //     ...this.getLeaderTeamEmployeeIds(employee.id),
-    //   ]);
-    // }
-
-    return new Set([employee.id]);
+    return new Set(
+      Array.from(this.employees.values())
+        .filter(
+          (item) =>
+            this.getHighestRolePower(item.roles) > 0 &&
+            this.getHighestRolePower(item.roles) <= maxVisibleRolePower,
+        )
+        .map((item) => item.id),
+    );
   }
 
   private getTaskAssignmentScope(employee: EmployeeRecord) {
@@ -916,14 +896,22 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     return new Set([...visibleScope, ...leaderIds]);
   }
 
-  private getTaskAssignableEmployeeIds() {
+  private getTaskAssignableEmployeeIds(assigner: EmployeeRecord) {
+    const assignerPower = this.getHighestRolePower(assigner.roles);
+    if (assignerPower === ROLE_POWER.EMPLOYEE) {
+      return new Set(assigner.active ? [assigner.id] : []);
+    }
+
+    const maxAssignablePower = assigner.roles.includes('SA1')
+      ? ROLE_POWER.SA2
+      : assignerPower;
     return new Set(
       Array.from(this.employees.values())
         .filter(
           (employee) =>
             employee.active &&
-            !employee.roles.includes('SA1') &&
-            !employee.roles.includes('SA2'),
+            this.getHighestRolePower(employee.roles) > 0 &&
+            this.getHighestRolePower(employee.roles) <= maxAssignablePower,
         )
         .map((employee) => employee.id),
     );
@@ -2720,7 +2708,7 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException('Task due date is required.');
     }
 
-    const taskAssignableEmployeeIds = this.getTaskAssignableEmployeeIds();
+    const taskAssignableEmployeeIds = this.getTaskAssignableEmployeeIds(currentEmployee);
     const requestedAssignedEmployeeIds = payload.assignedEmployeeIds?.length
       ? payload.assignedEmployeeIds
       : this.canManageRecords(currentEmployee)
@@ -2916,7 +2904,7 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     );
 
     if (payload.assignedEmployeeIds) {
-      const taskAssignableEmployeeIds = this.getTaskAssignableEmployeeIds();
+      const taskAssignableEmployeeIds = this.getTaskAssignableEmployeeIds(currentEmployee);
       const nextAssignedEmployeeIds = taskAssignableEmployeeIds.size
         ? payload.assignedEmployeeIds.filter((employeeId) =>
             taskAssignableEmployeeIds.has(employeeId),
