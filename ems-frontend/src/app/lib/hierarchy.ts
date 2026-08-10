@@ -56,9 +56,7 @@ export function canViewerSeeEmployee(viewer: Employee | null | undefined, employ
 
   const viewerPower = getHighestRolePower(viewer.roles);
   const employeePower = getHighestRolePower(employee.roles);
-  const maxVisibleRolePower = viewer.roles.includes('SA1')
-    ? rolePower.SA2
-    : viewerPower;
+  const maxVisibleRolePower = viewerPower;
 
   return employeePower > 0 && employeePower <= maxVisibleRolePower;
 }
@@ -106,9 +104,7 @@ export function getVisibleEmployeeIdsForViewer(employees: Employee[], viewer?: E
     return new Set([viewer.id]);
   }
 
-  const maxOtherVisibleRolePower = viewer.roles.includes('SA1')
-    ? rolePower.SA2
-    : maxVisibleRolePower;
+  const maxOtherVisibleRolePower = maxVisibleRolePower;
 
   return new Set(
     employees
@@ -175,9 +171,7 @@ export function getTaskAssignableEmployees(
     );
   }
 
-  const maxAssignablePower = viewer.roles.includes('SA1')
-    ? rolePower.SA2
-    : viewerPower;
+  const maxAssignablePower = viewerPower;
   return employees.filter(
     (employee) =>
       (employee.active !== false || selectedIds.has(employee.id)) &&

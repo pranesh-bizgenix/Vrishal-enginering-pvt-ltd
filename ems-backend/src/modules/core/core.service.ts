@@ -864,9 +864,7 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       return new Set([employee.id]);
     }
 
-    const maxOtherVisibleRolePower = employee.roles.includes('SA1')
-      ? ROLE_POWER.SA2
-      : maxVisibleRolePower;
+    const maxOtherVisibleRolePower = maxVisibleRolePower;
 
     return new Set(
       Array.from(this.employees.values())
@@ -903,9 +901,7 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       return new Set(assigner.active ? [assigner.id] : []);
     }
 
-    const maxAssignablePower = assigner.roles.includes('SA1')
-      ? ROLE_POWER.SA2
-      : assignerPower;
+    const maxAssignablePower = assignerPower;
     return new Set(
       Array.from(this.employees.values())
         .filter(

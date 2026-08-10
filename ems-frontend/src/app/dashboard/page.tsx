@@ -882,7 +882,7 @@ export default function DashboardPage() {
           // peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'}
           selectedPersonId={selectedPersonId}
           onSelectPerson={handlePersonScopeChange}
-          subtitle="Task Management Systems"
+          subtitle="Task Management System"
           title="Dashboard"
         />
 
