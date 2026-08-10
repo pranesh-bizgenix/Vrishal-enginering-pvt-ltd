@@ -54,25 +54,13 @@ export function canViewerSeeEmployee(viewer: Employee | null | undefined, employ
     return true;
   }
 
-  if (viewer.roles.includes('SA1')) {
-    return true;
-  }
+  const viewerPower = getHighestRolePower(viewer.roles);
+  const employeePower = getHighestRolePower(employee.roles);
+  const maxVisibleRolePower = viewer.roles.includes('SA1')
+    ? rolePower.SA2
+    : viewerPower;
 
-  if (viewer.roles.includes('SA2')) {
-    return !employee.roles.includes('SA1');
-  }
-
-  // Old hierarchy rule kept for reference:
-  // const viewerPower = getHighestRolePower(viewer.roles);
-  // if (viewerPower >= rolePower.ADMIN) {
-  //   return getHighestRolePower(employee.roles) < viewerPower;
-  // }
-  //
-  // if (viewer.roles.includes('LEADER')) {
-  //   return employee.leaderId === viewer.id && employee.roles.includes('EMPLOYEE') && !employee.roles.includes('LEADER');
-  // }
-
-  return false;
+  return employeePower > 0 && employeePower <= maxVisibleRolePower;
 }
 
 export function getDirectLeaderEmployeeIds(employees: Employee[], leaderId?: string) {
@@ -113,21 +101,22 @@ export function getVisibleEmployeeIdsForViewer(employees: Employee[], viewer?: E
     return new Set<string>();
   }
 
-  if (viewer.roles.includes('SA1')) {
-    return null;
-  }
-
   const maxVisibleRolePower = getHighestRolePower(viewer.roles);
   if (maxVisibleRolePower === rolePower.EMPLOYEE) {
     return new Set([viewer.id]);
   }
 
+  const maxOtherVisibleRolePower = viewer.roles.includes('SA1')
+    ? rolePower.SA2
+    : maxVisibleRolePower;
+
   return new Set(
     employees
       .filter(
         (employee) =>
-          getHighestRolePower(employee.roles) > 0 &&
-          getHighestRolePower(employee.roles) <= maxVisibleRolePower,
+          employee.id === viewer.id ||
+          (getHighestRolePower(employee.roles) > 0 &&
+            getHighestRolePower(employee.roles) <= maxOtherVisibleRolePower),
       )
       .map((employee) => employee.id),
   );

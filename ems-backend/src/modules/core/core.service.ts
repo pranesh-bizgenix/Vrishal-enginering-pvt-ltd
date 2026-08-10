@@ -859,21 +859,22 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
   }
 
   private getVisibleEmployeeScope(employee: EmployeeRecord) {
-    if (employee.roles.includes('SA1')) {
-      return null;
-    }
-
     const maxVisibleRolePower = this.getHighestRolePower(employee.roles);
     if (maxVisibleRolePower === ROLE_POWER.EMPLOYEE) {
       return new Set([employee.id]);
     }
 
+    const maxOtherVisibleRolePower = employee.roles.includes('SA1')
+      ? ROLE_POWER.SA2
+      : maxVisibleRolePower;
+
     return new Set(
       Array.from(this.employees.values())
         .filter(
           (item) =>
-            this.getHighestRolePower(item.roles) > 0 &&
-            this.getHighestRolePower(item.roles) <= maxVisibleRolePower,
+            item.id === employee.id ||
+            (this.getHighestRolePower(item.roles) > 0 &&
+              this.getHighestRolePower(item.roles) <= maxOtherVisibleRolePower),
         )
         .map((item) => item.id),
     );
