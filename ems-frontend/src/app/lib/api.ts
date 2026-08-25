@@ -1,4 +1,4 @@
-const LOCAL_API_URL = 'http://localhost:5010/api';
+const LOCAL_API_PORT = '5010';
 const PRODUCTION_API_URL = '/api';
 
 export type Role = 'SA1' | 'SA2' | 'ADMIN' | 'LEADER' | 'EMPLOYEE';
@@ -14,14 +14,21 @@ function resolveApiUrl() {
   if (typeof window !== 'undefined') {
     const { hostname } = window.location;
 
-    if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      return LOCAL_API_URL;
+    if (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '::1' ||
+      /^10\./.test(hostname) ||
+      /^192\.168\./.test(hostname) ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+    ) {
+      return `${window.location.protocol}//${hostname}:${LOCAL_API_PORT}/api`;
     }
 
     return PRODUCTION_API_URL;
   }
 
-  return LOCAL_API_URL;
+  return `http://localhost:${LOCAL_API_PORT}/api`;
 }
 
 export const API_URL = resolveApiUrl();

@@ -30,7 +30,7 @@ const projectFormInitial = {
   assignedEmployeeIds: [] as string[],
 };
 
-function Field({ label, children, required = false }: { label: string; children: ReactNode; required?: boolean }) {
+function Field({ label, children, required = false }: { label: ReactNode; children: ReactNode; required?: boolean }) {
   return (
     <label className="block min-w-0">
       <span className="mb-2 block text-sm font-medium text-slate-700">
@@ -231,7 +231,7 @@ export default function EditProjectPage() {
             </div>
           ) : null}
           {error ? <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
-          <section className="w-full min-w-0 max-w-full overflow-hidden rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] sm:p-6 lg:p-7">
+          <section className="w-full min-w-0 max-w-full overflow-visible rounded-[28px] border border-slate-200 bg-white shadow-[0_18px_45px_rgba(15,23,42,0.06)] sm:p-6 lg:p-7">
             <form className="w-full min-w-0 max-w-full space-y-4" onSubmit={submitProject}>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
@@ -254,61 +254,62 @@ export default function EditProjectPage() {
               <Field label="Project Description">
                 <textarea className={`${fieldClassName} min-h-28 resize-y`} disabled={!canEditProject} onChange={(event) => setProjectForm({ ...projectForm, description: event.target.value })} placeholder="Description" value={projectForm.description} />
               </Field>
-              <div className="min-w-0 max-w-full rounded-[26px] border border-slate-200 bg-slate-50 p-4 sm:p-5">
-                <div className="flex flex-col gap-2">
-                  <p className="text-sm font-medium text-slate-700">Assign Employees <span className="text-red-500">*</span></p>
-                  <p className="text-xs text-slate-500">Inactive employees stay visible for old project history, but cannot be newly assigned.</p>
-                </div>
-                <div className="relative mt-4 min-w-0 max-w-full" ref={employeeDropdownRef}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!canEditProject) {
-                        return;
-                      }
-                      setEmployeesOpen((current) => !current);
-                    }}
-                    className="flex min-w-0 w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-900 transition hover:border-slate-300"
-                  >
-                    <span className="truncate pr-3 text-slate-700">{selectedEmployeesLabel}</span>
-                    {employeesOpen ? <ChevronUpIcon className="h-5 w-5 text-slate-500" /> : <ChevronDownIcon className="h-5 w-5 text-slate-500" />}
-                  </button>
-                  {employeesOpen && canEditProject ? (
-                    <div className="absolute left-0 right-0 z-20 mt-2 max-h-72 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-lg">
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                        {selectableEmployees.map((employee) => {
-                          const isInactiveAssigned = !employee.active && projectForm.assignedEmployeeIds.includes(employee.id);
+              <Field label={<>Assign Employees <span className="text-red-500">*</span></>}>
+                <div className="min-w-0 max-w-full rounded-[26px] border border-slate-200 bg-slate-50 p-2 sm:p-3">
+                  <div className="flex flex-col gap-2">
+                    <p className="text-xs text-slate-500">Inactive employees stay visible for old project history, but cannot be newly assigned.</p>
+                  </div>
+                  <div className={`relative mt-2 min-w-0 max-w-full ${employeesOpen ? 'z-30' : 'z-0'}`} ref={employeeDropdownRef}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!canEditProject) {
+                          return;
+                        }
+                        setEmployeesOpen((current) => !current);
+                      }}
+                      className="flex min-w-0 w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-900 transition hover:border-slate-300"
+                    >
+                      <span className="truncate pr-3 text-slate-700">{selectedEmployeesLabel}</span>
+                      {employeesOpen ? <ChevronUpIcon className="h-5 w-5 text-slate-500" /> : <ChevronDownIcon className="h-5 w-5 text-slate-500" />}
+                    </button>
+                    {employeesOpen && canEditProject ? (
+                      <div className="absolute left-0 right-0 z-40 mt-2 max-h-72 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-lg">
+                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                          {selectableEmployees.map((employee) => {
+                            const isInactiveAssigned = !employee.active && projectForm.assignedEmployeeIds.includes(employee.id);
 
-                          return (
-                            <label
-                              key={employee.id}
-                              className={[
-                                'flex items-center gap-3 rounded-2xl border px-3 py-3 text-sm transition',
-                                isInactiveAssigned
-                                  ? 'border-amber-200 bg-amber-50 text-amber-700'
-                                  : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-slate-100',
-                              ].join(' ')}
-                            >
-                              <input
-                                checked={projectForm.assignedEmployeeIds.includes(employee.id)}
-                                disabled={!canEditProject || isInactiveAssigned}
-                                onChange={() =>
-                                  setProjectForm({
-                                    ...projectForm,
-                                    assignedEmployeeIds: toggleSelection(projectForm.assignedEmployeeIds, employee.id),
-                                  })
-                                }
-                                type="checkbox"
-                              />
-                              <span>{employee.name}{employee.active ? '' : ' (Inactive)'}</span>
-                            </label>
-                          );
-                        })}
+                            return (
+                              <label
+                                key={employee.id}
+                                className={[
+                                  'flex items-center gap-3 rounded-2xl border px-3 py-3 text-sm transition',
+                                  isInactiveAssigned
+                                    ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                    : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-slate-100',
+                                ].join(' ')}
+                              >
+                                <input
+                                  checked={projectForm.assignedEmployeeIds.includes(employee.id)}
+                                  disabled={!canEditProject || isInactiveAssigned}
+                                  onChange={() =>
+                                    setProjectForm({
+                                      ...projectForm,
+                                      assignedEmployeeIds: toggleSelection(projectForm.assignedEmployeeIds, employee.id),
+                                    })
+                                  }
+                                  type="checkbox"
+                                />
+                                <span>{employee.name}{employee.active ? '' : ' (Inactive)'}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
                 </div>
-              </div>
+              </Field>
               <Field label="Project Status">
                 <select className={fieldClassName} disabled={!canEditProject} onChange={(event) => setProjectForm({ ...projectForm, projectStatus: event.target.value as ProjectStatus })} value={projectForm.projectStatus}>
                   {projectStatusOptions.map((option) => (

@@ -7,6 +7,7 @@ import { clearAuth } from '../../lib/auth';
 import { getWorkspaceNavItems, routeSection } from '../../lib/workspace';
 import { canManageTeamRecords, canRunReports, isAdminRole } from '../../lib/hierarchy';
 import { DashboardSidebar, DashboardTopbar } from '../../../components/DashboardShell';
+import { PdfDocumentPreview } from '../../../components/PdfDocumentPreview';
 import type { DashboardResponse, NavItem, PaginatedResponse, Project, SectionKey, Task, TaskMedia } from '../../dashboard/types';
 import { ArrowLeftIcon, TrashIcon } from '@heroicons/react/24/outline';
 
@@ -892,7 +893,7 @@ export default function ProjectViewPage() {
                 </div>
               ) : (
                 <div className="h-[72vh] overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                  <iframe className="h-full w-full" src={previewMedia.url} title={getTaskMediaLabel(previewMedia)} />
+                  <PdfDocumentPreview className="h-full w-full" url={previewMedia.url} title={getTaskMediaLabel(previewMedia)} />
                 </div>
               )}
             </div>

@@ -7,6 +7,7 @@ import { clearAuth } from '../lib/auth';
 import { getWorkspaceNavItems, routeSection } from '../lib/workspace';
 import { canManageTeamRecords, canRunReports, getTaskAssignableEmployees, isAdminRole } from '../lib/hierarchy';
 import { DashboardSidebar, DashboardTopbar } from '../../components/DashboardShell';
+import { PdfDocumentPreview } from '../../components/PdfDocumentPreview';
 import type { DashboardResponse, Employee, NavItem, Project, SectionKey, Task, TaskMedia } from '../dashboard/types';
 import { ChevronDownIcon, ChevronUpIcon, DocumentIcon, EyeIcon, PhotoIcon, PlusIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { dispatchToast } from '../lib/customToast';
@@ -718,7 +719,7 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
 
               {!isAssignedSubmitOnly ? <div className="rounded-[26px] border border-[#d8ecbb] bg-[#f8fcf1] p-4 sm:p-5">
                 <p className="text-sm font-medium text-slate-700">Assign Employees <span className="text-red-500">*</span></p>
-                <div className="relative mt-4" ref={employeesDropdownRef}>
+                <div className={`relative mt-4 ${employeesOpen ? 'z-30' : 'z-0'}`} ref={employeesDropdownRef}>
                   <button
                     type="button"
                     onClick={() => {
@@ -739,7 +740,7 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
                   </button>
 
                   {employeesOpen && !taskDetailsLocked ? (
-                    <div className="absolute left-0 right-0 z-20 mt-2 max-h-72 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-lg">
+                    <div className="absolute left-0 right-0 z-40 mt-2 max-h-72 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 shadow-lg">
                       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                         {selectableEmployees.map((employee) => (
                           <label key={employee.id} className="flex items-center gap-3 rounded-2xl border border-[#d8ecbb] bg-[#f8fcf1] px-3 py-3 text-sm text-slate-700 transition hover:border-[#8fc740] hover:bg-white">
@@ -1070,7 +1071,7 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
                 </div>
               ) : (
                 <div className="h-[72vh] overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                  <iframe className="h-full w-full" src={previewMedia.url} title={getTaskMediaLabel(previewMedia)} />
+                  <PdfDocumentPreview className="h-full w-full" url={previewMedia.url} title={getTaskMediaLabel(previewMedia)} />
                 </div>
               )}
             </div>

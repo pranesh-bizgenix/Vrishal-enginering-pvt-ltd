@@ -667,11 +667,20 @@ export default function DashboardPage() {
     () => filteredTasks.filter((task) => activeProjectTaskProjectIds.has(task.projectId)),
     [activeProjectTaskProjectIds, filteredTasks],
   );
-  const filteredTasksByStatus = useMemo(() => ({
-    pending: activeProjectTasks.filter((task) => task.status === 'PENDING').length,
-    inProgress: activeProjectTasks.filter((task) => task.status === 'IN_PROGRESS').length,
-    completed: activeProjectTasks.filter((task) => task.status === 'COMPLETED').length,
-  }), [activeProjectTasks]);
+  // The Task Overview is personal for every role. Leaders and admins may still
+  // access their team's data elsewhere, but these three counters show only tasks
+  // directly assigned to the signed-in employee.
+  const myTasksByStatus = useMemo(() => {
+    const myTasks = me
+      ? activeProjectTasks.filter((task) => task.assignedEmployeeIds.includes(me.id))
+      : [];
+
+    return {
+      pending: myTasks.filter((task) => task.status === 'PENDING').length,
+      inProgress: myTasks.filter((task) => task.status === 'IN_PROGRESS').length,
+      completed: myTasks.filter((task) => task.status === 'COMPLETED').length,
+    };
+  }, [activeProjectTasks, me]);
   const overdueTaskCount = useMemo(() => {
     const now = loadedAt || 0;
     return activeProjectTasks.filter((task) => task.status !== 'COMPLETED' && task.dueDate && new Date(task.dueDate).getTime() < now).length;
@@ -703,10 +712,10 @@ export default function DashboardPage() {
     [activeVisibleEmployees],
   );
   const statusChartRows = useMemo<ChartRow[]>(() => [
-    { label: 'Pending', value: filteredTasksByStatus.pending, tone: 'bg-amber-500', color: '#f59e0b' },
-    { label: 'Ongoing', value: filteredTasksByStatus.inProgress, tone: 'bg-blue-500', color: '#3b82f6' },
-    { label: 'Completed', value: filteredTasksByStatus.completed, tone: 'bg-emerald-500', color: '#10b981' },
-  ], [filteredTasksByStatus.completed, filteredTasksByStatus.inProgress, filteredTasksByStatus.pending]);
+    { label: 'Pending', value: myTasksByStatus.pending, tone: 'bg-amber-500', color: '#f59e0b' },
+    { label: 'Ongoing', value: myTasksByStatus.inProgress, tone: 'bg-blue-500', color: '#3b82f6' },
+    { label: 'Completed', value: myTasksByStatus.completed, tone: 'bg-emerald-500', color: '#10b981' },
+  ], [myTasksByStatus.completed, myTasksByStatus.inProgress, myTasksByStatus.pending]);
   const overdueTaskChartRows = useMemo<ChartRow[]>(() => [
     { label: 'Not Done', value: overdueTaskCount, tone: 'bg-rose-500', color: '#e11d48' },
     { label: 'Done', value: completedOverdueTaskCount, tone: 'bg-emerald-500', color: '#10b981' },
@@ -942,9 +951,9 @@ export default function DashboardPage() {
                     <p className="text-xs uppercase tracking-[0.38em] text-slate-500">Task Overview</p>
                     <div className="mt-5 overflow-hidden rounded-[24px] border border-slate-200 bg-slate-50">
                       {([
-                        [canViewAllDashboardData ? 'Pending tasks' : 'My pending tasks', filteredTasksByStatus.pending],
-                        [canViewAllDashboardData ? 'Ongoing tasks' : 'My ongoing tasks', filteredTasksByStatus.inProgress],
-                        [canViewAllDashboardData ? 'Completed tasks' : 'My completed tasks', filteredTasksByStatus.completed],
+                        ['My pending tasks', myTasksByStatus.pending],
+                        ['My ongoing tasks', myTasksByStatus.inProgress],
+                        ['My completed tasks', myTasksByStatus.completed],
                         ['Task Notifications', filteredTaskNotificationsCount],
                         ['Overdue projects', filteredOverdueProjects.length],
                       ].filter((item): item is [string, number] => Boolean(item))).map(([label, value], index, rows) => (
