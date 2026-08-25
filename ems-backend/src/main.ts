@@ -17,13 +17,23 @@ async function bootstrap() {
       limit: process.env.REQUEST_BODY_LIMIT || '100mb',
     }),
   );
-  const corsOrigins = (
-    process.env.CORS_ORIGINS ??
-    'http://localhost:3010,http://127.0.0.1:3010,https://tms.sjsangath.com'
-  )
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean);
+  const defaultCorsOrigins = [
+    'http://localhost:3010',
+    'http://127.0.0.1:3010',
+    'https://tms.sjsangath.com',
+  ];
+  // Environment values extend the safe defaults instead of replacing them.
+  // This keeps the production frontend working if CORS_ORIGINS is set without
+  // including the production URL.
+  const corsOrigins = [
+    ...new Set([
+      ...defaultCorsOrigins,
+      ...(process.env.CORS_ORIGINS || '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ]),
+  ];
 
   const isPrivateNetworkFrontend = (origin: string) => {
     try {
