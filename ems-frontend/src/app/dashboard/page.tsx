@@ -681,6 +681,22 @@ export default function DashboardPage() {
       completed: myTasks.filter((task) => task.status === 'COMPLETED').length,
     };
   }, [activeProjectTasks, me]);
+  const taskStatusTasks = useMemo(() => {
+    if (canViewAllDashboardData) {
+      // SA1 and SA2 always receive the complete task-status picture.
+      return basePeriodTasks.filter((task) => activeBaseProjectIds.has(task.projectId));
+    }
+
+    // Leaders, admins, and employees see only tasks directly assigned to them.
+    return me
+      ? activeProjectTasks.filter((task) => task.assignedEmployeeIds.includes(me.id))
+      : [];
+  }, [activeBaseProjectIds, activeProjectTasks, basePeriodTasks, canViewAllDashboardData, me]);
+  const taskStatusByRole = useMemo(() => ({
+    pending: taskStatusTasks.filter((task) => task.status === 'PENDING').length,
+    inProgress: taskStatusTasks.filter((task) => task.status === 'IN_PROGRESS').length,
+    completed: taskStatusTasks.filter((task) => task.status === 'COMPLETED').length,
+  }), [taskStatusTasks]);
   const overdueTaskCount = useMemo(() => {
     const now = loadedAt || 0;
     return activeProjectTasks.filter((task) => task.status !== 'COMPLETED' && task.dueDate && new Date(task.dueDate).getTime() < now).length;
@@ -712,10 +728,10 @@ export default function DashboardPage() {
     [activeVisibleEmployees],
   );
   const statusChartRows = useMemo<ChartRow[]>(() => [
-    { label: 'Pending', value: myTasksByStatus.pending, tone: 'bg-amber-500', color: '#f59e0b' },
-    { label: 'Ongoing', value: myTasksByStatus.inProgress, tone: 'bg-blue-500', color: '#3b82f6' },
-    { label: 'Completed', value: myTasksByStatus.completed, tone: 'bg-emerald-500', color: '#10b981' },
-  ], [myTasksByStatus.completed, myTasksByStatus.inProgress, myTasksByStatus.pending]);
+    { label: 'Pending', value: taskStatusByRole.pending, tone: 'bg-amber-500', color: '#f59e0b' },
+    { label: 'Ongoing', value: taskStatusByRole.inProgress, tone: 'bg-blue-500', color: '#3b82f6' },
+    { label: 'Completed', value: taskStatusByRole.completed, tone: 'bg-emerald-500', color: '#10b981' },
+  ], [taskStatusByRole.completed, taskStatusByRole.inProgress, taskStatusByRole.pending]);
   const overdueTaskChartRows = useMemo<ChartRow[]>(() => [
     { label: 'Not Done', value: overdueTaskCount, tone: 'bg-rose-500', color: '#e11d48' },
     { label: 'Done', value: completedOverdueTaskCount, tone: 'bg-emerald-500', color: '#10b981' },
