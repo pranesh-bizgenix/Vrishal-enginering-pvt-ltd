@@ -27,22 +27,40 @@ function createPdfObjectUrl(dataUrl: string) {
 }
 
 export function PdfDocumentPreview({ url, title, className }: PdfDocumentPreviewProps) {
-  const [previewUrl, setPreviewUrl] = useState(url);
+  const [generatedPreview, setGeneratedPreview] = useState<{
+    source: string;
+    url: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!url.startsWith('data:application/pdf')) {
-      setPreviewUrl(url);
       return;
     }
 
-    const objectUrl = createPdfObjectUrl(url);
-    setPreviewUrl(objectUrl || url);
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    async function preparePreview() {
+      await Promise.resolve();
+      if (cancelled) {
+        return;
+      }
+
+      objectUrl = createPdfObjectUrl(url);
+      if (objectUrl) {
+        setGeneratedPreview({ source: url, url: objectUrl });
+      }
+    }
+
+    void preparePreview();
     return () => {
+      cancelled = true;
       if (objectUrl) {
         URL.revokeObjectURL(objectUrl);
       }
     };
   }, [url]);
 
+  const previewUrl = generatedPreview?.source === url ? generatedPreview.url : url;
   return <iframe className={className} src={previewUrl} title={title} />;
 }

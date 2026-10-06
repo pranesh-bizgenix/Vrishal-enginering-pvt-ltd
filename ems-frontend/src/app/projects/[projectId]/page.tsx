@@ -31,6 +31,22 @@ type TaskDraft = {
   completed: boolean;
 };
 
+function isTaskApproved(task: Task) {
+  return task.notes.some((note) => note.message.trim().toLowerCase().startsWith('approved by'));
+}
+
+function isTaskSubmittedDone(task: Task) {
+  return task.notes.some((note) => note.markDone);
+}
+
+function isTaskApproveWaiting(task: Task) {
+  return isTaskSubmittedDone(task) && !isTaskApproved(task);
+}
+
+function isTaskChecked(task: Task) {
+  return isTaskApproved(task) || task.status === 'COMPLETED' || isTaskApproveWaiting(task);
+}
+
 function getTaskMediaType(file: File): TaskMedia['type'] {
   return file.type.startsWith('image/') ? 'PHOTO' : 'DOCUMENT';
 }
@@ -215,22 +231,6 @@ export default function ProjectViewPage() {
 
   function getAssignedToLabel(task: Task) {
     return task.assignedEmployees.map((employee) => employee.name).join(', ') || 'Not assigned';
-  }
-
-  function isTaskApproved(task: Task) {
-    return task.notes.some((note) => note.message.trim().toLowerCase().startsWith('approved by'));
-  }
-
-  function isTaskSubmittedDone(task: Task) {
-    return task.notes.some((note) => note.markDone);
-  }
-
-  function isTaskApproveWaiting(task: Task) {
-    return isTaskSubmittedDone(task) && !isTaskApproved(task);
-  }
-
-  function isTaskChecked(task: Task) {
-    return isTaskApproved(task) || task.status === 'COMPLETED' || isTaskApproveWaiting(task);
   }
 
   function canApproveTask(task: Task) {

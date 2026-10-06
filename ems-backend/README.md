@@ -35,6 +35,9 @@ $ npm install
 ## Compile and run the project
 
 ```bash
+# local development (starts a project-local PostgreSQL, migrates, and seeds it)
+$ npm run start:local
+
 # development
 $ npm run start
 
@@ -44,6 +47,10 @@ $ npm run start:dev
 # production mode
 $ npm run start:prod
 ```
+
+`start:local` stores its PostgreSQL data in `.local/postgres`, so it does not
+require a system-wide PostgreSQL installation. The API listens on port `5010`
+by default.
 
 ## Run tests
 

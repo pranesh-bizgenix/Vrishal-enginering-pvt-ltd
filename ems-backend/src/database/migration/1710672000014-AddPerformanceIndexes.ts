@@ -72,20 +72,36 @@ export class AddPerformanceIndexes1710672000014 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`DROP INDEX IF EXISTS idx_notification_logs_category_created`);
-    await queryRunner.query(`DROP INDEX IF EXISTS idx_notification_logs_channel_created`);
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS idx_notification_logs_category_created`,
+    );
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS idx_notification_logs_channel_created`,
+    );
     await queryRunner.query(`DROP INDEX IF EXISTS idx_task_media_task_created`);
     await queryRunner.query(`DROP INDEX IF EXISTS idx_task_notes_task_created`);
-    await queryRunner.query(`DROP INDEX IF EXISTS idx_task_assignments_employee_task`);
-    await queryRunner.query(`DROP INDEX IF EXISTS idx_tasks_created_by_employee`);
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS idx_task_assignments_employee_task`,
+    );
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS idx_tasks_created_by_employee`,
+    );
     await queryRunner.query(`DROP INDEX IF EXISTS idx_tasks_deleted_due_date`);
     await queryRunner.query(`DROP INDEX IF EXISTS idx_tasks_deleted_status`);
     await queryRunner.query(`DROP INDEX IF EXISTS idx_tasks_deleted_created`);
-    await queryRunner.query(`DROP INDEX IF EXISTS idx_project_assignments_employee_project`);
-    await queryRunner.query(`DROP INDEX IF EXISTS idx_projects_deleted_due_date`);
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS idx_project_assignments_employee_project`,
+    );
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS idx_projects_deleted_due_date`,
+    );
     await queryRunner.query(`DROP INDEX IF EXISTS idx_projects_deleted_status`);
-    await queryRunner.query(`DROP INDEX IF EXISTS idx_projects_deleted_created`);
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS idx_projects_deleted_created`,
+    );
     await queryRunner.query(`DROP INDEX IF EXISTS idx_employees_leader_id`);
-    await queryRunner.query(`DROP INDEX IF EXISTS idx_employees_active_deleted`);
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS idx_employees_active_deleted`,
+    );
   }
 }

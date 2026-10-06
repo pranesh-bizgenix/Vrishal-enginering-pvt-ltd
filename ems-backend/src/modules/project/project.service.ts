@@ -8,7 +8,12 @@ export class ProjectService {
 
   getProjects(
     authorization?: string,
-    options?: { page?: number; perPage?: number; search?: string; employeeIds?: string[] },
+    options?: {
+      page?: number;
+      perPage?: number;
+      search?: string;
+      employeeIds?: string[];
+    },
   ) {
     return this.emsService.getProjects(authorization, options);
   }

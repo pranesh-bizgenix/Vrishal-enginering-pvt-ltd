@@ -339,7 +339,7 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
   }
 
   private normalizeRoles(roles?: string[] | null, email?: string): Role[] {
-    if (email?.trim().toLowerCase() === 'admin@sjsangath.com') {
+    if (email?.trim().toLowerCase() === 'admin@vrishalengineering.com') {
       return ['SA1'];
     }
 
@@ -765,7 +765,9 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     }
 
     const now = new Date().toISOString();
-    for (const item of normalizedMedia.filter((item) => !existingById.has(item.id))) {
+    for (const item of normalizedMedia.filter(
+      (item) => !existingById.has(item.id),
+    )) {
       await this.query(
         `INSERT INTO task_media (id, task_id, type, url, label, mime_type, created_by_employee_id, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
@@ -915,7 +917,10 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
   }
 
   private taskMatchesEmployeeScope(
-    task: { assignedEmployeeIds: string[]; createdByEmployeeId?: string | null },
+    task: {
+      assignedEmployeeIds: string[];
+      createdByEmployeeId?: string | null;
+    },
     scope: Set<string> | null,
     employeeId: string,
   ) {
@@ -926,7 +931,10 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
   }
 
   private getHighestRolePower(roles: Role[]) {
-    return roles.reduce((highest, role) => Math.max(highest, ROLE_POWER[role] || 0), 0);
+    return roles.reduce(
+      (highest, role) => Math.max(highest, ROLE_POWER[role] || 0),
+      0,
+    );
   }
 
   private getAssignableRolesForEmployee(employee: EmployeeRecord) {
@@ -960,7 +968,9 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       return requestedScope;
     }
 
-    return new Set(requestedIds.filter((employeeId) => visibleScope.has(employeeId)));
+    return new Set(
+      requestedIds.filter((employeeId) => visibleScope.has(employeeId)),
+    );
   }
 
   private async getCurrentEmployee(authorization?: string) {
@@ -1075,7 +1085,10 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  private async buildProjectViews(projectRows?: ProjectRow[], includeTasks = true) {
+  private async buildProjectViews(
+    projectRows?: ProjectRow[],
+    includeTasks = true,
+  ) {
     await this.syncEmployeesFromDatabase();
     const projects = projectRows || (await this.fetchProjectRows());
     if (!projects.length) {
@@ -1336,7 +1349,11 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     const dueAt = new Date(taskView.dueDate).getTime();
     const now = Date.now();
 
-    if (!Number.isFinite(createdAt) || !Number.isFinite(dueAt) || dueAt <= createdAt) {
+    if (
+      !Number.isFinite(createdAt) ||
+      !Number.isFinite(dueAt) ||
+      dueAt <= createdAt
+    ) {
       return;
     }
 
@@ -1353,15 +1370,19 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       }
 
       const reminderKey = `${taskView.id}:${step.percent}`;
-      this.scheduleLongTimeout(reminderKey, () => {
-        this.taskReminderTimers.delete(reminderKey);
-        void this.sendTaskWhatsappProgressReminder(
-          taskView.id,
-          step.percent,
-          step.label,
-          assignedByName,
-        );
-      }, triggerAt - now);
+      this.scheduleLongTimeout(
+        reminderKey,
+        () => {
+          this.taskReminderTimers.delete(reminderKey);
+          void this.sendTaskWhatsappProgressReminder(
+            taskView.id,
+            step.percent,
+            step.label,
+            assignedByName,
+          );
+        },
+        triggerAt - now,
+      );
     }
   }
 
@@ -1426,7 +1447,9 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const taskViews = await this.buildTaskViews(await this.fetchTaskRows(taskIds));
+    const taskViews = await this.buildTaskViews(
+      await this.fetchTaskRows(taskIds),
+    );
     const now = Date.now();
     const reminderSteps = [
       { percent: 33, label: 'First progress reminder' },
@@ -1436,7 +1459,9 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
 
     for (const taskView of taskViews) {
       const createdAt = new Date(taskView.createdAt).getTime();
-      const dueAt = taskView.dueDate ? new Date(taskView.dueDate).getTime() : NaN;
+      const dueAt = taskView.dueDate
+        ? new Date(taskView.dueDate).getTime()
+        : NaN;
       if (!Number.isFinite(createdAt) || !Number.isFinite(dueAt)) {
         continue;
       }
@@ -1447,7 +1472,8 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
         'System';
 
       for (const step of reminderSteps) {
-        const triggerAt = createdAt + ((dueAt - createdAt) * step.percent) / 100;
+        const triggerAt =
+          createdAt + ((dueAt - createdAt) * step.percent) / 100;
         if (triggerAt <= now) {
           await this.sendTaskWhatsappProgressReminder(
             taskView.id,
@@ -1753,8 +1779,12 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
 
     return taskViews.some(
       (task) =>
-        ((task.createdByEmployeeId ? scope.has(task.createdByEmployeeId) : false) ||
-          task.assignedEmployeeIds.some((employeeId) => scope.has(employeeId))) &&
+        ((task.createdByEmployeeId
+          ? scope.has(task.createdByEmployeeId)
+          : false) ||
+          task.assignedEmployeeIds.some((employeeId) =>
+            scope.has(employeeId),
+          )) &&
         this.notificationTextIncludes(text, task.title),
     );
   }
@@ -1851,10 +1881,7 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     return this.getHighestRolePower(employee.roles) >= ROLE_POWER.LEADER;
   }
 
-  private hasTaskPayloadField(
-    payload: Record<string, unknown>,
-    field: string,
-  ) {
+  private hasTaskPayloadField(payload: Record<string, unknown>, field: string) {
     return Object.prototype.hasOwnProperty.call(payload, field);
   }
 
@@ -2064,9 +2091,7 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       !currentEmployee.roles.includes('SA1') &&
       !currentEmployee.roles.includes('SA2')
     ) {
-      throw new UnauthorizedException(
-        'Only SA1 or SA2 can create employees.',
-      );
+      throw new UnauthorizedException('Only SA1 or SA2 can create employees.');
     }
 
     await this.ensureEmployeeHierarchyColumn();
@@ -2207,9 +2232,14 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     );
     const allowedRoles = this.getAssignableRolesForEmployee(currentEmployee);
     const isBootstrapSuperAdmin =
-      (existingEmployee.email || existingUser?.email || archivedUser?.email || '')
+      (
+        existingEmployee.email ||
+        existingUser?.email ||
+        archivedUser?.email ||
+        ''
+      )
         .trim()
-        .toLowerCase() === 'admin@sjsangath.com';
+        .toLowerCase() === 'admin@vrishalengineering.com';
     const nextRoles = isBootstrapSuperAdmin
       ? ['SA1']
       : requestedNextRoles.filter((role) => allowedRoles.includes(role));
@@ -2355,7 +2385,10 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
   async getProjects(authorization?: string, options?: ListQueryOptions) {
     const employee = await this.getCurrentEmployee(authorization);
     const scope = this.getVisibleEmployeeScope(employee);
-    const requestedScope = this.getRequestedEmployeeScope(scope, options?.employeeIds);
+    const requestedScope = this.getRequestedEmployeeScope(
+      scope,
+      options?.employeeIds,
+    );
 
     if (options?.page) {
       return this.fetchPaginatedProjectViews(requestedScope, options);
@@ -2366,7 +2399,10 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     const search = options?.search?.trim().toLowerCase() || '';
     const visibleProjects = projects
       .filter((project) =>
-        this.itemMatchesEmployeeScope(project.assignedEmployeeIds, requestedScope),
+        this.itemMatchesEmployeeScope(
+          project.assignedEmployeeIds,
+          requestedScope,
+        ),
       )
       .filter((project) => {
         if (!search) {
@@ -2416,7 +2452,9 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
         this.getVisibleEmployeeScope(currentEmployee),
       )
     ) {
-      throw new UnauthorizedException('You do not have access to this project.');
+      throw new UnauthorizedException(
+        'You do not have access to this project.',
+      );
     }
 
     return projectView;
@@ -2500,9 +2538,7 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
   ) {
     const currentEmployee = await this.getCurrentEmployee(authorization);
     if (!currentEmployee.roles.includes('SA1')) {
-      throw new UnauthorizedException(
-        'Only SA1 can edit projects.',
-      );
+      throw new UnauthorizedException('Only SA1 can edit projects.');
     }
 
     const projectRows = await this.fetchProjectRows([projectId]);
@@ -2608,7 +2644,10 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     const visibleTasks = taskViews
       .filter((task) =>
         hasRequestedEmployees
-          ? this.itemMatchesEmployeeScope(task.assignedEmployeeIds, requestedScope)
+          ? this.itemMatchesEmployeeScope(
+              task.assignedEmployeeIds,
+              requestedScope,
+            )
           : this.taskMatchesEmployeeScope(task, scope, employee.id),
       )
       .filter((task) => {
@@ -2618,8 +2657,9 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
 
         if (options?.dueDate) {
           const taskDueDate = task.dueDate
-            ? new Date(task.dueDate)
-                .toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+            ? new Date(task.dueDate).toLocaleDateString('en-CA', {
+                timeZone: 'Asia/Kolkata',
+              })
             : '';
           if (taskDueDate !== options.dueDate) {
             return false;
@@ -2705,7 +2745,8 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException('Task due date is required.');
     }
 
-    const taskAssignableEmployeeIds = this.getTaskAssignableEmployeeIds(currentEmployee);
+    const taskAssignableEmployeeIds =
+      this.getTaskAssignableEmployeeIds(currentEmployee);
     const requestedAssignedEmployeeIds = payload.assignedEmployeeIds?.length
       ? payload.assignedEmployeeIds
       : this.canManageRecords(currentEmployee)
@@ -2771,9 +2812,11 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       [
         taskView.title,
         taskView.projectName,
-        `${taskView.assignedEmployees
-          .map((employee) => employee.name)
-          .join(', ') || 'None'} | Due: ${this.formatTaskReminderDateTime(taskView.dueDate)}`,
+        `${
+          taskView.assignedEmployees
+            .map((employee) => employee.name)
+            .join(', ') || 'None'
+        } | Due: ${this.formatTaskReminderDateTime(taskView.dueDate)}`,
       ],
       this.buildTaskWhatsappMessage('Created', taskView, currentEmployee.name),
     );
@@ -2811,9 +2854,9 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     if (!projectRows[0]) {
       throw new NotFoundException('Project not found.');
     }
-    const existingAssignedEmployeeIds = (await this.fetchTaskAssignments([taskId])).map(
-      (assignment) => assignment.employeeId,
-    );
+    const existingAssignedEmployeeIds = (
+      await this.fetchTaskAssignments([taskId])
+    ).map((assignment) => assignment.employeeId);
     const {
       canChangeTaskStatus,
       canEditTaskDetails,
@@ -2839,7 +2882,9 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       payload.status !== existing.status &&
       !canChangeTaskStatus
     ) {
-      throw new UnauthorizedException('Only the assigned-by user can change task status.');
+      throw new UnauthorizedException(
+        'Only the assigned-by user can change task status.',
+      );
     }
     if (!canEditTaskDetails) {
       if (detailChangeRequested) {
@@ -2901,7 +2946,8 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     );
 
     if (payload.assignedEmployeeIds) {
-      const taskAssignableEmployeeIds = this.getTaskAssignableEmployeeIds(currentEmployee);
+      const taskAssignableEmployeeIds =
+        this.getTaskAssignableEmployeeIds(currentEmployee);
       const nextAssignedEmployeeIds = taskAssignableEmployeeIds.size
         ? payload.assignedEmployeeIds.filter((employeeId) =>
             taskAssignableEmployeeIds.has(employeeId),
@@ -3073,8 +3119,13 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
         'You do not have access to add notes to this task.',
       );
     }
-    if (payload.markDone && !taskView.assignedEmployeeIds.includes(currentEmployee.id)) {
-      throw new UnauthorizedException('Only assigned users can submit tasks done.');
+    if (
+      payload.markDone &&
+      !taskView.assignedEmployeeIds.includes(currentEmployee.id)
+    ) {
+      throw new UnauthorizedException(
+        'Only assigned users can submit tasks done.',
+      );
     }
     if (payload.markDone && taskView.notes.some((note) => note.markDone)) {
       throw new BadRequestException('Task is already waiting for approval.');
@@ -3135,7 +3186,9 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
         payload.markDone ? 'Submitted Done' : 'Note Updated',
         nextView,
         currentEmployee.name,
-        completionLine ? `${completionLine}\nNote: ${message}` : `Note: ${message}`,
+        completionLine
+          ? `${completionLine}\nNote: ${message}`
+          : `Note: ${message}`,
       ),
     );
     return nextView;
@@ -3148,7 +3201,9 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
       this.canViewAllRecords(currentEmployee) ||
       taskView.createdByEmployeeId === currentEmployee.id;
     if (!canApproveTask) {
-      throw new UnauthorizedException('Only the assigned-by user, SA1, or SA2 can approve tasks.');
+      throw new UnauthorizedException(
+        'Only the assigned-by user, SA1, or SA2 can approve tasks.',
+      );
     }
 
     const alreadyApproved = taskView.notes.some((note) =>
@@ -3159,7 +3214,9 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     }
     const submittedDone = taskView.notes.some((note) => note.markDone);
     if (!submittedDone) {
-      throw new BadRequestException('Assigned user must submit done before approval.');
+      throw new BadRequestException(
+        'Assigned user must submit done before approval.',
+      );
     }
 
     await this.appendTaskNote(
@@ -3195,9 +3252,7 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
   async deleteTask(authorization: string | undefined, taskId: string) {
     const currentEmployee = await this.getCurrentEmployee(authorization);
     if (!this.canDeleteRecords(currentEmployee)) {
-      throw new UnauthorizedException(
-        'Only SA1 can delete tasks.',
-      );
+      throw new UnauthorizedException('Only SA1 can delete tasks.');
     }
 
     const existingRows = await this.fetchTaskRows([taskId]);
@@ -3222,9 +3277,7 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
   async deleteProject(authorization: string | undefined, projectId: string) {
     const currentEmployee = await this.getCurrentEmployee(authorization);
     if (!this.canDeleteRecords(currentEmployee)) {
-      throw new UnauthorizedException(
-        'Only SA1 can delete projects.',
-      );
+      throw new UnauthorizedException('Only SA1 can delete projects.');
     }
 
     const projectRows = await this.fetchProjectRows([projectId]);
@@ -3424,7 +3477,9 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
         }
 
         for (const assignedEmployeeId of task.assignedEmployeeIds) {
-          const employeeCounts = counts.byEmployeeId.get(assignedEmployeeId) || {
+          const employeeCounts = counts.byEmployeeId.get(
+            assignedEmployeeId,
+          ) || {
             pending: 0,
             completed: 0,
           };
@@ -3564,8 +3619,8 @@ export class CoreService implements OnModuleInit, OnModuleDestroy {
     const employee = await this.getCurrentEmployee(authorization);
     const notificationScope =
       employee.roles.includes('SA1') || employee.roles.includes('SA2')
-      ? null
-      : new Set([employee.id]);
+        ? null
+        : new Set([employee.id]);
     const [projectViews, allTaskViews, notificationLogsPage] =
       await Promise.all([
         this.buildProjectViews(),

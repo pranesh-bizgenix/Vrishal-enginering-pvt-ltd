@@ -19,6 +19,9 @@ type SeedEmployee = {
   deletedAt: string | null;
 };
 
+const LEGACY_ADMIN_EMAIL = 'admin@sjsangath.com';
+const VRISHAL_ADMIN_EMAIL = 'admin@vrishalengineering.com';
+
 function hashPassword(password: string) {
   const salt = randomBytes(16).toString('hex');
   const hash = scryptSync(password, salt, 64).toString('hex');
@@ -31,8 +34,8 @@ function loadSeedEmployees(): SeedEmployee[] {
     {
       id: randomUUID(),
       name: 'Admin',
-      email: 'admin@sjsangath.com',
-      password: hashPassword('sjsangath@123'),
+      email: VRISHAL_ADMIN_EMAIL,
+      password: hashPassword('vrishal@123'),
       phone: '',
       roles: ['SA1'],
       isActive: true,
@@ -49,6 +52,26 @@ async function bootstrap() {
   const employees = loadSeedEmployees();
 
   for (const employee of employees) {
+    await AppDataSource.query(
+      `UPDATE users
+       SET email = $1,
+           updated_at = $2
+       WHERE email = $3
+         AND NOT EXISTS (SELECT 1 FROM users WHERE email = $1)`,
+      [employee.email, employee.updatedAt, LEGACY_ADMIN_EMAIL],
+    );
+
+    const existingUsers = await AppDataSource.query(
+      `SELECT id
+       FROM users
+       WHERE email = $1
+       LIMIT 1`,
+      [employee.email],
+    );
+    if (existingUsers[0]?.id) {
+      employee.id = existingUsers[0].id;
+    }
+
     await AppDataSource.query(
       `INSERT INTO employees (
         id,

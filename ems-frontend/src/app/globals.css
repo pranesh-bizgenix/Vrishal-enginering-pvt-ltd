@@ -1,6 +1,8 @@
 ﻿@import 'tailwindcss';
 
 :root {
+  --font-body: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-display: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --bg: #f4f9fc;
   --surface: rgba(255, 255, 255, 0.86);
   --surface-strong: #ffffff;
@@ -38,7 +40,7 @@ body {
   margin: 0;
   overflow-x: hidden;
   color: var(--text);
-  font-family: var(--font-body), sans-serif;
+  font-family: var(--font-body);
   background: transparent;
   text-rendering: geometricPrecision;
   -webkit-font-smoothing: antialiased;
@@ -48,7 +50,7 @@ h1,
 h2,
 h3,
 h4 {
-  font-family: var(--font-display), sans-serif;
+  font-family: var(--font-display);
 }
 
 input,
@@ -372,9 +374,9 @@ a[class*='border-slate-300'] {
 .branded-loader-ring {
   position: absolute;
   inset: 0;
-  border: 5px solid rgba(143, 199, 64, 0.22);
-  border-top-color: #8fc740;
-  border-right-color: #059669;
+  border: 5px solid rgba(57, 97, 132, 0.2);
+  border-top-color: #396184;
+  border-right-color: #78a2c5;
   border-radius: 999px;
   animation: brandedLoaderSpin 900ms linear infinite;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
@@ -386,8 +388,26 @@ a[class*='border-slate-300'] {
   height: 77px;
   width: 77px;
   border: 3px solid #ffffff;
+  border-radius: 18px;
   object-fit: cover;
+  animation: brandedLogoPulse 1.8s ease-in-out infinite;
   box-shadow: 0 16px 34px rgba(15, 23, 42, 0.18);
+}
+
+.branded-loader-company {
+  margin: 0;
+  color: #396184;
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.branded-loader-message {
+  margin: -0.45rem 0 0;
+  color: #64748b;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
 }
 
 @keyframes fadeIn {
@@ -404,6 +424,16 @@ a[class*='border-slate-300'] {
 @keyframes brandedLoaderSpin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes brandedLogoPulse {
+  0%,
+  100% {
+    transform: scale(0.94);
+  }
+  50% {
+    transform: scale(1);
   }
 }
 

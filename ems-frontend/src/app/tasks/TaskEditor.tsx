@@ -140,7 +140,6 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
   const [taskForm, setTaskForm] = useState(taskFormInitial);
   const [taskItems, setTaskItems] = useState<TaskItemDraft[]>([taskItemInitial()]);
   const [taskMediaByItemId, setTaskMediaByItemId] = useState<Record<string, TaskMedia[]>>({});
-  const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [employeesOpen, setEmployeesOpen] = useState(false);
@@ -153,7 +152,6 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
   const accessToastShownRef = useRef(false);
 
   const loadData = useCallback(async () => {
-    setBusy(true);
     setError('');
     try {
       const requests: Array<Promise<unknown>> = [
@@ -215,8 +213,6 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
         clearAuth();
         router.replace('/auth/login');
       }
-    } finally {
-      setBusy(false);
     }
   }, [mode, router, taskId]);
 
@@ -379,10 +375,6 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
     setTaskItems((current) => current.map((item) => (item.id === itemId ? { ...item, ncItems: [...item.ncItems, ''] } : item)));
   }
 
-  function formatDateTime(value: string | null) {
-  return value ? new Date(value).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'Not set';
-}
-
   function updateNcItem(itemId: string, ncIndex: number, value: string) {
     setTaskItems((current) =>
       current.map((item) =>
@@ -473,7 +465,7 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
     }));
   }
 
-  function canRemoveTaskMedia(_media: TaskMedia) {
+  function canRemoveTaskMedia() {
     return canDeleteRecords;
   }
 
@@ -959,7 +951,7 @@ export function TaskEditor({ mode, taskId }: TaskEditorProps) {
                                     <EyeIcon className="h-4 w-4" />
                                     Preview
                                   </button>
-                                  {canRemoveTaskMedia(media) ? (
+                                  {canRemoveTaskMedia() ? (
                                     <button
                                       type="button"
                                       onClick={() => removeTaskMedia(item.id, media.id || media.url)}

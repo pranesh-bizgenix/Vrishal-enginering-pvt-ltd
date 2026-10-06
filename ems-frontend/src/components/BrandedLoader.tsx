@@ -19,15 +19,16 @@ export function BrandedLoader({
           <div className="branded-loader-orbit">
             <div className="branded-loader-ring" />
             <Image
-              alt="SJ Sangath"
+              alt="Vrishal Engineering Pvt Ltd"
               className="branded-loader-logo"
               height={88}
               priority
-              src="/sangath-ipl-loader.jpg"
+              src="/vrishal-logo.jpg"
               width={88}
             />
           </div>
-          <p>{message}</p>
+          <p className="branded-loader-company">Vrishal Engineering Pvt Ltd</p>
+          <p className="branded-loader-message">{message}</p>
         </div>
       </div>
     );
@@ -40,15 +41,16 @@ export function BrandedLoader({
         <div className="branded-loader-orbit">
           <div className="branded-loader-ring" />
           <Image
-            alt="SJ Sangath"
+            alt="Vrishal Engineering Pvt Ltd"
             className="branded-loader-logo"
             height={88}
             priority
-            src="/sangath-ipl-loader.jpg"
+            src="/vrishal-logo.jpg"
             width={88}
           />
         </div>
-        <p>{message}</p>
+        <p className="branded-loader-company">Vrishal Engineering Pvt Ltd</p>
+        <p className="branded-loader-message">{message}</p>
       </div>
     </main>
   );

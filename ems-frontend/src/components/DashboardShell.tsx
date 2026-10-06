@@ -1,13 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import type { DashboardResponse, Employee, NavItem, SectionKey } from '../app/dashboard/types';
+import type { NavItem, SectionKey } from '../app/dashboard/types';
 import { ArrowRightStartOnRectangleIcon } from '@heroicons/react/24/outline'
 import { HomeIcon, Squares2X2Icon } from "@heroicons/react/24/outline";
-import { api } from '../app/lib/api';
-import { canManageTeamRecords, canViewerSeeEmployee, formatRoleName, getHighestRolePower } from '../app/lib/hierarchy';
 
 
 type PeopleFilterItem = {
@@ -79,14 +77,14 @@ export function DashboardSidebar({
         <div className="relative">
           <div className="flex items-center gap-3">
             <Image
-              alt="SJ Sangath"
-              className="h-14 w-14 border border-white bg-[#8fc740] object-cover p-1 shadow-[0_16px_36px_rgba(15,23,42,0.14)]"
+              alt="Vrishal Engineering Pvt Ltd"
+              className="h-14 w-14 rounded-xl border border-white object-cover shadow-[0_16px_36px_rgba(15,23,42,0.14)]"
               height={56}
-              src="/sangath-ipl-loader.jpg"
+              src="/vrishal-logo.jpg"
               width={56}
             />
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.32em] text-[#6f9e2c]">SJ Sangath</p>
+              <p className="max-w-[180px] text-[10px] font-bold uppercase leading-4 tracking-[0.2em] text-[#396184]">Vrishal Engineering Pvt Ltd</p>
               <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-950">TMS</h1>
             </div>
           </div>
@@ -200,95 +198,12 @@ export function DashboardTopbar({
   onLogout,
   onMenuOpen,
   onRunReport,
-  peopleFilter = [],
-  // peopleFilterTitle = 'People',
-  selectedPersonId = '',
-  onSelectPerson,
 }: DashboardTopbarProps) {
   const router = useRouter();
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement | null>(null);
   const displayName = userName?.trim() || 'Admin';
   const displayEmail = userEmail?.trim() || displayName.toLowerCase();
-  const [fallbackPeopleFilter, setFallbackPeopleFilter] = useState<PeopleFilterItem[]>([]);
-  const [fallbackSelectedPersonId, setFallbackSelectedPersonId] = useState('');
-  const hasPagePeopleFilter = peopleFilter.length > 0;
-  const effectivePeopleFilter = hasPagePeopleFilter ? peopleFilter : fallbackPeopleFilter;
-  const effectiveSelectedPersonId = hasPagePeopleFilter ? selectedPersonId : fallbackSelectedPersonId;
-  const effectiveSelectedPerson = effectivePeopleFilter.find((person) => person.id === effectiveSelectedPersonId) || null;
-  // const effectivePeopleFilterTitle = effectiveSelectedPerson ? `Viewing: ${effectiveSelectedPerson.name}` : onSelectPerson ? peopleFilterTitle : 'Leaders & Employees';
-  const effectiveOnSelectPerson = useMemo(() => {
-    if (onSelectPerson) {
-      return onSelectPerson;
-    }
-
-    if (!fallbackPeopleFilter.length) {
-      return undefined;
-    }
-
-    return (employeeId: string) => {
-      setFallbackSelectedPersonId(employeeId);
-      if (employeeId) {
-        window.localStorage.setItem('ems-dashboard-person-scope', employeeId);
-      } else {
-        window.localStorage.removeItem('ems-dashboard-person-scope');
-      }
-      window.dispatchEvent(new CustomEvent('ems-person-scope-change', { detail: employeeId }));
-      window.location.reload();
-    };
-  }, [fallbackPeopleFilter.length, onSelectPerson]);
-
-  const showPeopleFilter = Boolean(onSelectPerson) || fallbackPeopleFilter.length > 0;
-
-  useEffect(() => {
-    if (hasPagePeopleFilter) {
-      return;
-    }
-
-    let mounted = true;
-    async function loadPeopleFilter() {
-      try {
-        const [dashboardData, employees] = await Promise.all([api<DashboardResponse>('/dashboard'), api<Employee[]>('/employees')]);
-        if (!mounted) {
-          return;
-        }
-
-        const me = dashboardData.employee;
-        if (!canManageTeamRecords(me.roles)) {
-          setFallbackPeopleFilter([]);
-          return;
-        }
-
-        const people = employees.filter((employee) => employee.id !== me.id && canViewerSeeEmployee(me, employee));
-
-        setFallbackPeopleFilter(
-          people
-            .sort((left, right) => {
-              return getHighestRolePower(right.roles) - getHighestRolePower(left.roles) || left.name.localeCompare(right.name);
-            })
-            .map((employee) => ({
-              id: employee.id,
-              name: employee.name,
-              roleLabel: employee.roles.map(formatRoleName).join(', '),
-              leaderName: employee.leaderName || 'Unassigned',
-              projectCount: 0,
-              taskCount: 0,
-            })),
-        );
-        setFallbackSelectedPersonId(window.localStorage.getItem('ems-dashboard-person-scope') || '');
-      } catch {
-        if (mounted) {
-          setFallbackPeopleFilter([]);
-        }
-      }
-    }
-
-    void loadPeopleFilter();
-    return () => {
-      mounted = false;
-    };
-  }, [hasPagePeopleFilter]);
-
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
       if (!profileRef.current?.contains(event.target as Node)) {

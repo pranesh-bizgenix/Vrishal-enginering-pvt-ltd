@@ -133,7 +133,9 @@ export class ReportService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private isIndiaMonthEnd(parts: ReturnType<ReportService['getIndiaDateTimeParts']>) {
+  private isIndiaMonthEnd(
+    parts: ReturnType<ReportService['getIndiaDateTimeParts']>,
+  ) {
     return parts.day === new Date(parts.year, parts.month, 0).getDate();
   }
 
@@ -141,11 +143,7 @@ export class ReportService implements OnModuleInit, OnModuleDestroy {
     const parts = this.getIndiaDateTimeParts();
 
     try {
-      if (
-        parts.weekday !== 'Sun' &&
-        parts.hour === 18 &&
-        parts.minute === 0
-      ) {
+      if (parts.weekday !== 'Sun' && parts.hour === 18 && parts.minute === 0) {
         await this.runDailyPendingReport();
       }
 
@@ -350,9 +348,15 @@ export class ReportService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async buildMisSummary(period?: ReportPeriod): Promise<MisSummary> {
-    const params = period ? [period.start.toISOString(), period.end.toISOString()] : undefined;
-    const taskPeriodFilter = period ? 'AND t.created_at >= $1::timestamptz AND t.created_at < $2::timestamptz' : '';
-    const projectPeriodFilter = period ? 'AND p.created_at >= $1::timestamptz AND p.created_at < $2::timestamptz' : '';
+    const params = period
+      ? [period.start.toISOString(), period.end.toISOString()]
+      : undefined;
+    const taskPeriodFilter = period
+      ? 'AND t.created_at >= $1::timestamptz AND t.created_at < $2::timestamptz'
+      : '';
+    const projectPeriodFilter = period
+      ? 'AND p.created_at >= $1::timestamptz AND p.created_at < $2::timestamptz'
+      : '';
     const [
       activeProjectRows,
       taskBreakdownRows,
@@ -480,7 +484,9 @@ export class ReportService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private async buildDailySummary(period = this.getDayPeriod()): Promise<DailyPendingSummary> {
+  private async buildDailySummary(
+    period = this.getDayPeriod(),
+  ): Promise<DailyPendingSummary> {
     const params = [period.start.toISOString(), period.end.toISOString()];
     const [totalRows, projectRows, employeeRows] = await Promise.all([
       this.query<Array<{ count: string }> extends (infer T)[] ? T : never>(
@@ -577,7 +583,8 @@ export class ReportService implements OnModuleInit, OnModuleDestroy {
 
   private async buildMonthlyReportSummary(): Promise<MonthlyReportSummary> {
     const now = new Date();
-    const { start: periodStart, end: periodEnd } = this.getMonthToDatePeriod(now);
+    const { start: periodStart, end: periodEnd } =
+      this.getMonthToDatePeriod(now);
     const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const periodParams = [periodStart.toISOString(), periodEnd.toISOString()];
     const [totalRows, employeeRows, taskRows] = await Promise.all([

@@ -793,7 +793,7 @@ export default function DashboardPage() {
 
     const systemAdminEmployeeId = employees.find(
       (employee) =>
-        employee.email?.trim().toLowerCase() === 'admin@sjsangath.com' ||
+        employee.email?.trim().toLowerCase() === 'admin@vrishalengineering.com' ||
         employee.name?.trim().toLowerCase() === 'admin',
     )?.id;
     const employeesToShow = activeVisibleEmployees.filter(

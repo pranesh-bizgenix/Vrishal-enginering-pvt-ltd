@@ -36,11 +36,8 @@ export default function MyAccountPage() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [totalEmployees, setTotalEmployees] = useState(0);
-  const [leaderOptions, setLeaderOptions] = useState<Employee[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [totalOpenTasks, setTotalOpenTasks] = useState(0);
-  const [savingLeader, setSavingLeader] = useState(false);
-  const [selectedLeaderId, setSelectedLeaderId] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [error, setError] = useState('');
 
@@ -53,14 +50,11 @@ export default function MyAccountPage() {
         api<PaginatedResponse<Employee>>('/employees?page=1&perPage=100'),
         api<PaginatedResponse<Task>>('/tasks?page=1&perPage=12&openOnly=true'),
       ]);
-      const leaderData = await api<Employee[]>('/employees/leaders');
       setDashboard(dashboardData);
       setEmployees(employeeData.items);
       setTotalEmployees(employeeData.total);
-      setLeaderOptions(leaderData);
       setTasks(taskData.items);
       setTotalOpenTasks(taskData.total);
-      setSelectedLeaderId(dashboardData.employee.leaderId || '');
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : 'Unable to load account details.';
       setError(message);
@@ -77,6 +71,7 @@ export default function MyAccountPage() {
       return;
     }
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadData();
   }, [loadData, router]);
 
@@ -134,23 +129,6 @@ export default function MyAccountPage() {
       await api('/reports/run-scheduled', { method: 'POST' });
     } catch (reportError) {
       setError(reportError instanceof Error ? reportError.message : 'Unable to trigger reports.');
-    }
-  }
-
-  async function handleLeaderSave() {
-    setSavingLeader(true);
-    setError('');
-
-    try {
-      await api('/employees/me/leader', {
-        method: 'PATCH',
-        body: JSON.stringify({ leaderId: selectedLeaderId || null }),
-      });
-      await loadData();
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'Unable to update reporting leader.');
-    } finally {
-      setSavingLeader(false);
     }
   }
 

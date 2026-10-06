@@ -53,8 +53,12 @@ export class AddTasksTable1710672000004 implements MigrationInterface {
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`DROP INDEX IF EXISTS idx_tasks_status`);
     await queryRunner.query(`DROP INDEX IF EXISTS idx_tasks_project_id`);
-    await queryRunner.query(`ALTER TABLE tasks DROP CONSTRAINT IF EXISTS fk_tasks_created_by_employee`);
-    await queryRunner.query(`ALTER TABLE tasks DROP COLUMN IF EXISTS created_by_employee_id`);
+    await queryRunner.query(
+      `ALTER TABLE tasks DROP CONSTRAINT IF EXISTS fk_tasks_created_by_employee`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE tasks DROP COLUMN IF EXISTS created_by_employee_id`,
+    );
     await queryRunner.query(`DROP TABLE IF EXISTS tasks`);
   }
 }

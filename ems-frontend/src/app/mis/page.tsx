@@ -524,18 +524,6 @@ export default function MisPage() {
   const navItems: NavItem[] = getWorkspaceNavItems(canManage, isAdmin, me?.roles ?? []);
   const initials = me?.name?.trim()?.charAt(0)?.toUpperCase() || 'A';
   const leaderEmployeeIds = useMemo(() => getDirectLeaderEmployeeIds(employees, me?.id), [employees, me?.id]);
-  const selectedPerson = useMemo(() => employees.find((employee) => employee.id === selectedPersonId) || null, [employees, selectedPersonId]);
-  const selectedScopeEmployeeIds = useMemo(() => {
-    if (selectedPerson) {
-      return getEmployeeScopeIds(employees, selectedPerson);
-    }
-
-    if (me && !isAdmin) {
-      return new Set([me.id]);
-    }
-
-    return null;
-  }, [employees, isAdmin, me, selectedPerson]);
   const sidebarPeopleFilter = useMemo(() => {
     if (!me || (!isAdmin && !isLeader)) {
       return [];
@@ -560,16 +548,25 @@ export default function MisPage() {
         taskCount: 0,
       }));
   }, [employees, isAdmin, isLeader, leaderEmployeeIds, me]);
-  useEffect(() => {
-    if (!me || !selectedPersonId) {
-      return;
+  const validatedSelectedPersonId =
+    !me || !selectedPersonId || sidebarPeopleFilter.some((person) => person.id === selectedPersonId)
+      ? selectedPersonId
+      : '';
+  const selectedPerson = useMemo(
+    () => employees.find((employee) => employee.id === validatedSelectedPersonId) || null,
+    [employees, validatedSelectedPersonId],
+  );
+  const selectedScopeEmployeeIds = useMemo(() => {
+    if (selectedPerson) {
+      return getEmployeeScopeIds(employees, selectedPerson);
     }
 
-    if (!sidebarPeopleFilter.some((person) => person.id === selectedPersonId)) {
-      setSelectedPersonId('');
-      window.localStorage.removeItem('ems-dashboard-person-scope');
+    if (me && !isAdmin) {
+      return new Set([me.id]);
     }
-  }, [me, selectedPersonId, sidebarPeopleFilter]);
+
+    return null;
+  }, [employees, isAdmin, me, selectedPerson]);
   const filteredProjects = useMemo(
     () =>
       projects
@@ -715,7 +712,7 @@ export default function MisPage() {
         return leftTime - rightTime || left.title.localeCompare(right.title);
       });
   }, [filteredTasks, me?.id, selectedPerson?.id]);
-  const isSystemAdminUser = Boolean(me && (me.email?.trim().toLowerCase() === 'admin@sjsangath.com' || me.name?.trim().toLowerCase() === 'admin'));
+  const isSystemAdminUser = Boolean(me && (me.email?.trim().toLowerCase() === 'admin@vrishalengineering.com' || me.name?.trim().toLowerCase() === 'admin'));
   const recentNotifications = useMemo(() => {
     const periodNotifications = (dashboard?.recentNotifications || []).filter((notification) => dateMatchesPeriod(notification.createdAt, period, periodValue, periodEndValue));
     if ((isSystemAdminUser && !selectedPerson) || !me) {
@@ -844,11 +841,11 @@ export default function MisPage() {
     <main className="min-h-screen bg-[#edf2f7] text-slate-900 lg:flex">
       <DashboardSidebar activeSection="mis" navItems={navItems} onClose={() => setSidebarOpen(false)} onSelect={handleSection} open={sidebarOpen} peopleFilter={sidebarPeopleFilter} 
       // peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'} 
-      selectedPersonId={selectedPersonId} onSelectPerson={handlePersonScopeChange} />
+      selectedPersonId={validatedSelectedPersonId} onSelectPerson={handlePersonScopeChange} />
       <div className="flex min-w-0 flex-1 flex-col">
         <DashboardTopbar canRunReport={canRunReports(me?.roles ?? [])} initials={initials} userEmail={me?.email ?? ''} userName={me?.name ?? 'Admin'} onLogout={handleLogout} onMenuOpen={() => setSidebarOpen(true)} onRunReport={handleRunReport} peopleFilter={sidebarPeopleFilter} 
         // peopleFilterTitle={isAdmin ? 'Leaders & Employees' : 'My Employees'} 
-        selectedPersonId={selectedPersonId} onSelectPerson={handlePersonScopeChange} subtitle="Task Management System" title="MIS" />
+        selectedPersonId={validatedSelectedPersonId} onSelectPerson={handlePersonScopeChange} subtitle="Task Management System" title="MIS" />
         <section className="px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
           {error ? <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
           <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] sm:p-6 lg:p-7">
