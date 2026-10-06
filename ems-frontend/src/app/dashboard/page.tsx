@@ -3,7 +3,7 @@
 import { startTransition, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, getToken } from '../lib/api';
-import { clearAuth } from '../lib/auth';
+import { clearAuth, getUser } from '../lib/auth';
 import { getWorkspaceNavItems, routeSection } from '../lib/workspace';
 import { canManageTeamRecords, canRunReports, getDirectLeaderEmployeeIds, getEmployeeScopeIds, getVisibleEmployeeIdsForViewer, isAdminRole, itemMatchesEmployeeScope } from '../lib/hierarchy';
 import { DashboardSidebar, DashboardTopbar } from '../../components/DashboardShell';
@@ -377,12 +377,61 @@ export default function DashboardPage() {
     setError('');
 
     try {
-      const [dashboardData, taskData, projectData, employeeData] = await Promise.all([
-        api<DashboardResponse>('/dashboard'),
-        api<Task[]>('/tasks'),
-        api<Project[]>('/projects'),
+      const [taskData, projectData, employeeData, notificationData] = await Promise.all([
+        api<Task[]>('/dashboard-data/tasks'),
+        api<Project[]>('/dashboard-data/projects'),
         api<Employee[]>('/employees'),
+        api<PaginatedResponse<NotificationLog>>('/reports/notification-logs?page=1&perPage=20'),
       ]);
+      const authenticatedUser = getUser();
+      const employee = employeeData.find((item) => item.id === authenticatedUser?.id)
+        || employeeData.find((item) => item.email.toLowerCase() === authenticatedUser?.email.toLowerCase());
+
+      if (!employee) {
+        throw new Error('Unauthorized');
+      }
+
+      const activeProjects = projectData.filter((project) => project.active && project.projectStatus !== 'COMPLETED');
+      const pendingTasks = taskData.filter((task) => task.status === 'PENDING');
+      const inProgressTasks = taskData.filter((task) => task.status === 'IN_PROGRESS');
+      const completedTasks = taskData.filter((task) => task.status === 'COMPLETED');
+      const openTaskCountByProjectId = new Map<string, number>();
+
+      taskData.forEach((task) => {
+        if (task.status !== 'COMPLETED') {
+          openTaskCountByProjectId.set(
+            task.projectId,
+            (openTaskCountByProjectId.get(task.projectId) || 0) + 1,
+          );
+        }
+      });
+
+      const dashboardData: DashboardResponse = {
+        employee,
+        totals: {
+          activeProjects: activeProjects.length,
+          activeEmployees: employeeData.filter((item) => item.active).length,
+          visibleTasks: taskData.length,
+          taskNotifications: notificationData.total,
+        },
+        tasksByStatus: {
+          pending: pendingTasks.length,
+          inProgress: inProgressTasks.length,
+          completed: completedTasks.length,
+        },
+        assignedTasks: taskData,
+        pendingTasks,
+        completedTasks,
+        overdueProjects: activeProjects.filter(
+          (project) => project.dueDate && new Date(project.dueDate).getTime() < Date.now(),
+        ),
+        projectPendingSummary: activeProjects.map((project) => ({
+          projectId: project.id,
+          projectName: project.name,
+          pendingTasks: openTaskCountByProjectId.get(project.id) || 0,
+        })),
+        recentNotifications: notificationData.items,
+      };
 
       startTransition(() => {
         setDashboard(dashboardData);
@@ -415,7 +464,6 @@ export default function DashboardPage() {
       return;
     }
 
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadData();
   }, [loadData, router]);
 
@@ -585,7 +633,6 @@ export default function DashboardPage() {
 
     const canUsePersonFilter = isSuperAdmin;
     if (!canUsePersonFilter || !sidebarPeopleFilter.some((person) => person.id === selectedPersonId)) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedPersonId('');
       window.localStorage.removeItem('ems-dashboard-person-scope');
     }
